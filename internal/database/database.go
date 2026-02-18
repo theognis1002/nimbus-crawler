@@ -14,7 +14,7 @@ func NewPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, err
 		return nil, fmt.Errorf("parsing pool config: %w", err)
 	}
 
-	poolCfg.MaxConns = 20
+	poolCfg.MaxConns = cfg.MaxConns
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

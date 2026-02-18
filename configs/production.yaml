@@ -4,6 +4,8 @@ postgres:
   user: ${POSTGRES_USER}
   password: ${POSTGRES_PASSWORD}
   database: ${POSTGRES_DB}
+  sslmode: require
+  max_conns: 50
 
 redis:
   host: ${REDIS_HOST}
