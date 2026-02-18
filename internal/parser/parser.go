@@ -80,7 +80,9 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	var msg queue.ParseMessage
 	if err := json.Unmarshal(d.Body, &msg); err != nil {
 		logger.Error("failed to unmarshal message", "error", err)
-		_ = d.Nack(true)
+		if err := d.Nack(true); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -90,14 +92,18 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	parts := strings.SplitN(msg.S3HTMLLink, "/", 2)
 	if len(parts) != 2 {
 		logger.Error("invalid s3 link", "link", msg.S3HTMLLink)
-		_ = d.Nack(true)
+		if err := d.Nack(true); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
 	htmlData, err := p.minio.GetObject(ctx, parts[0], parts[1])
 	if err != nil {
 		logger.Error("failed to get html from minio", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -105,12 +111,18 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	hash := ContentHash(htmlData)
 	exists, err := models.ContentHashExists(ctx, p.pool, hash)
 	if err != nil {
-		logger.Warn("content hash check failed", "error", err)
+		logger.Error("content hash check failed, will retry", "error", err)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
+		return
 	}
 	if exists {
 		logger.Debug("duplicate content, skipping")
 		_ = models.UpdateURLStatus(ctx, p.pool, msg.URLID, models.StatusSkipped)
-		_ = d.Ack()
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
@@ -118,7 +130,9 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(htmlData))
 	if err != nil {
 		logger.Error("failed to parse html", "error", err)
-		_ = d.Nack(true)
+		if err := d.Nack(true); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -130,7 +144,9 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	textKey := storage.TextKey(msg.URL)
 	if err := p.minio.PutObject(ctx, storage.TextBucket, textKey, []byte(text), "text/plain"); err != nil {
 		logger.Error("failed to store text", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 	s3TextLink := storage.TextBucket + "/" + textKey
@@ -161,7 +177,11 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 		if len(validURLs) > 0 {
 			inserted, err := models.BulkInsertURLs(ctx, p.pool, validURLs, validDomains, newDepth)
 			if err != nil {
-				logger.Warn("bulk insert failed", "error", err)
+				logger.Error("bulk insert failed, will retry", "error", err)
+				if err := d.Nack(false); err != nil {
+					logger.Error("failed to nack message", "error", err)
+				}
+				return
 			}
 
 			for _, u := range inserted {
@@ -175,10 +195,14 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queu
 	// Update URL record
 	if err := models.UpdateURLParsed(ctx, p.pool, msg.URLID, hash, s3TextLink); err != nil {
 		logger.Error("failed to update url record", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
 	logger.Info("parsed successfully", "extracted_urls", len(extractedURLs))
-	_ = d.Ack()
+	if err := d.Ack(); err != nil {
+		logger.Error("failed to ack message", "error", err)
+	}
 }

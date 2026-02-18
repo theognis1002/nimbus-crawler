@@ -23,6 +23,9 @@ crawler:
   timeout_secs: 30
   max_redirects: 5
   prefetch_count: 10
+  proxy:
+    file: ""
+    health_cooldown_s: 60
 
 parser:
   workers: 5

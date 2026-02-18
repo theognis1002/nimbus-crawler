@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -22,14 +23,18 @@ const (
 )
 
 type Fetcher struct {
-	client   *http.Client
-	dnsCache *cache.DNSCache
+	directClient *http.Client
+	proxyClients map[string]*http.Client
+	proxyPool    *ProxyPool
+	dnsCache     *cache.DNSCache
+	logger       *slog.Logger
 }
 
-func NewFetcher(dnsCache *cache.DNSCache, timeoutSecs, maxRedirects int) *Fetcher {
+func NewFetcher(dnsCache *cache.DNSCache, proxyPool *ProxyPool, timeoutSecs, maxRedirects int, logger *slog.Logger) *Fetcher {
 	dialer := &net.Dialer{Timeout: dialTimeout}
+	timeout := time.Duration(timeoutSecs) * time.Second
 
-	transport := &http.Transport{
+	directTransport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -48,21 +53,83 @@ func NewFetcher(dnsCache *cache.DNSCache, timeoutSecs, maxRedirects int) *Fetche
 		IdleConnTimeout:     idleConnTimeout,
 	}
 
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   time.Duration(timeoutSecs) * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
-			}
-			return nil
-		},
+	checkRedirect := func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return nil
 	}
 
-	return &Fetcher{client: client, dnsCache: dnsCache}
+	directClient := &http.Client{
+		Transport:     directTransport,
+		Timeout:       timeout,
+		CheckRedirect: checkRedirect,
+	}
+
+	f := &Fetcher{
+		directClient: directClient,
+		dnsCache:     dnsCache,
+		proxyPool:    proxyPool,
+		logger:       logger,
+	}
+
+	if proxyPool != nil {
+		f.proxyClients = make(map[string]*http.Client, proxyPool.Len())
+		for _, proxyURL := range proxyPool.proxies {
+			transport := &http.Transport{
+				Proxy:               http.ProxyURL(proxyURL),
+				MaxIdleConns:        maxIdleConns,
+				MaxIdleConnsPerHost: maxIdleConnsPerHost,
+				IdleConnTimeout:     idleConnTimeout,
+			}
+			f.proxyClients[proxyURL.String()] = &http.Client{
+				Transport:     transport,
+				Timeout:       timeout,
+				CheckRedirect: checkRedirect,
+			}
+		}
+	}
+
+	return f
 }
 
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, int, error) {
+	if f.proxyPool == nil {
+		return f.doFetch(ctx, rawURL, f.directClient)
+	}
+
+	proxy := f.proxyPool.Next(ctx)
+	if proxy == nil {
+		f.logger.WarnContext(ctx, "all proxies unhealthy, falling back to direct", "url", rawURL)
+		return f.doFetch(ctx, rawURL, f.directClient)
+	}
+
+	client, ok := f.proxyClients[proxy.String()]
+	if !ok {
+		f.logger.ErrorContext(ctx, "no http client for proxy", "proxy", proxy.Redacted())
+		return f.doFetch(ctx, rawURL, f.directClient)
+	}
+
+	body, status, err := f.doFetch(ctx, rawURL, client)
+	if err != nil {
+		f.proxyPool.MarkUnhealthy(ctx, proxy)
+		f.logger.WarnContext(ctx, "proxy failed, retrying with next", "proxy", proxy.Redacted(), "url", rawURL, "error", err)
+
+		nextProxy := f.proxyPool.Next(ctx)
+		if nextProxy == nil {
+			return f.doFetch(ctx, rawURL, f.directClient)
+		}
+		nextClient, ok := f.proxyClients[nextProxy.String()]
+		if !ok {
+			return f.doFetch(ctx, rawURL, f.directClient)
+		}
+		return f.doFetch(ctx, rawURL, nextClient)
+	}
+
+	return body, status, nil
+}
+
+func (f *Fetcher) doFetch(ctx context.Context, rawURL string, client *http.Client) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("creating request: %w", err)
@@ -71,7 +138,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, int, error)
 	req.Header.Set("User-Agent", robots.CrawlerUserAgent)
 	req.Header.Set("Accept", acceptHeader)
 
-	resp, err := f.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("fetching %s: %w", rawURL, err)
 	}

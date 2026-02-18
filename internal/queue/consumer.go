@@ -14,6 +14,7 @@ const (
 	reclaimInterval  = 30 * time.Second
 	reclaimMinIdle   = 60 * time.Second
 	reclaimBatchSize = 50
+	ackTimeout       = 5 * time.Second
 )
 
 type Consumer struct {
@@ -24,6 +25,7 @@ type Consumer struct {
 	consumer string
 	count    int
 	logger   *slog.Logger
+	wg       sync.WaitGroup
 }
 
 func NewConsumer(rdb *redis.Client, stream, dlq, group, consumerName string, count int, logger *slog.Logger) *Consumer {
@@ -43,22 +45,26 @@ func NewConsumer(rdb *redis.Client, stream, dlq, group, consumerName string, cou
 func (c *Consumer) Run(ctx context.Context) <-chan Delivery {
 	ch := make(chan Delivery)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	c.wg.Add(2)
 	go func() {
-		defer wg.Done()
+		defer c.wg.Done()
 		c.readLoop(ctx, ch)
 	}()
 	go func() {
-		defer wg.Done()
+		defer c.wg.Done()
 		c.reclaimLoop(ctx, ch)
 	}()
 	go func() {
-		wg.Wait()
+		c.wg.Wait()
 		close(ch)
 	}()
 
 	return ch
+}
+
+// Wait blocks until the consumer's internal goroutines have fully exited.
+func (c *Consumer) Wait() {
+	c.wg.Wait()
 }
 
 func (c *Consumer) readLoop(ctx context.Context, ch chan<- Delivery) {
@@ -76,7 +82,10 @@ func (c *Consumer) readLoop(ctx context.Context, ch chan<- Delivery) {
 		}).Result()
 
 		if err != nil {
-			if err == redis.Nil || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if err == redis.Nil {
 				continue
 			}
 			c.logger.Error("XREADGROUP error", "error", err, "stream", c.stream)
@@ -86,7 +95,10 @@ func (c *Consumer) readLoop(ctx context.Context, ch chan<- Delivery) {
 
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
-				d := c.buildDelivery(msg)
+				d, ok := c.buildDelivery(msg)
+				if !ok {
+					continue
+				}
 				select {
 				case ch <- d:
 				case <-ctx.Done():
@@ -131,7 +143,10 @@ func (c *Consumer) reclaimPending(ctx context.Context, ch chan<- Delivery) {
 		}
 
 		for _, msg := range msgs {
-			d := c.buildDelivery(msg)
+			d, ok := c.buildDelivery(msg)
+			if !ok {
+				continue
+			}
 			select {
 			case ch <- d:
 			case <-ctx.Done():
@@ -146,33 +161,46 @@ func (c *Consumer) reclaimPending(ctx context.Context, ch chan<- Delivery) {
 	}
 }
 
-func (c *Consumer) buildDelivery(msg redis.XMessage) Delivery {
-	payload, _ := msg.Values["payload"].(string)
+func (c *Consumer) buildDelivery(msg redis.XMessage) (Delivery, bool) {
+	payload, ok := msg.Values["payload"].(string)
+	if !ok || payload == "" {
+		c.logger.Error("message missing payload field", "stream", c.stream, "id", msg.ID)
+		ackCtx, ackCancel := ctxBG()
+		defer ackCancel()
+		_ = c.rdb.XAck(ackCtx, c.stream, c.group, msg.ID).Err()
+		return Delivery{}, false
+	}
 
 	id := msg.ID
 	return Delivery{
 		Body: []byte(payload),
 		Ack: func() error {
-			return c.rdb.XAck(ctxBG(), c.stream, c.group, id).Err()
+			ctx, cancel := ctxBG()
+			defer cancel()
+			return c.rdb.XAck(ctx, c.stream, c.group, id).Err()
 		},
 		Nack: func(toDLQ bool) error {
 			if toDLQ {
-				if err := c.rdb.XAdd(ctxBG(), &redis.XAddArgs{
+				addCtx, addCancel := ctxBG()
+				defer addCancel()
+				if err := c.rdb.XAdd(addCtx, &redis.XAddArgs{
 					Stream: c.dlq,
 					Values: map[string]interface{}{"payload": payload},
 				}).Err(); err != nil {
 					return err
 				}
-				return c.rdb.XAck(ctxBG(), c.stream, c.group, id).Err()
+				ackCtx, ackCancel := ctxBG()
+				defer ackCancel()
+				return c.rdb.XAck(ackCtx, c.stream, c.group, id).Err()
 			}
 			// Requeue: no-op — message stays in PEL, reclaim loop will re-deliver it
 			return nil
 		},
-	}
+	}, true
 }
 
-// ctxBG returns a background context for ack/nack operations
+// ctxBG returns a background context with a timeout for ack/nack operations
 // that must complete even after the main context is cancelled.
-func ctxBG() context.Context {
-	return context.Background()
+func ctxBG() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), ackTimeout)
 }

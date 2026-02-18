@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -91,7 +90,9 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	var msg queue.URLMessage
 	if err := json.Unmarshal(d.Body, &msg); err != nil {
 		logger.Error("failed to unmarshal message", "error", err)
-		_ = d.Nack(true)
+		if err := d.Nack(true); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -99,7 +100,9 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 
 	if msg.Depth > c.cfg.MaxDepth {
 		logger.Debug("max depth exceeded, skipping")
-		_ = d.Ack()
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
@@ -107,19 +110,25 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	existing, err := models.GetURLByURL(ctx, c.pool, msg.URL)
 	if err != nil && err != pgx.ErrNoRows {
 		logger.Error("failed to check url status", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 	if existing != nil && (existing.Status == string(models.StatusCrawled) || existing.Status == string(models.StatusParsed)) {
 		logger.Debug("already crawled, skipping")
-		_ = d.Ack()
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
 	parsed, err := url.Parse(msg.URL)
 	if err != nil {
 		logger.Error("invalid url", "error", err)
-		_ = d.Ack()
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 	domain := parsed.Hostname()
@@ -127,7 +136,9 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	// Ensure domain exists
 	if err := models.UpsertDomain(ctx, c.pool, domain, robots.DefaultCrawlDelayMs); err != nil {
 		logger.Error("failed to upsert domain", "domain", domain, "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -141,14 +152,22 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		if existing != nil {
 			_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, models.StatusSkipped)
 		}
-		_ = d.Ack()
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
+		}
 		return
 	}
 
 	// Rate limit
 	if err := c.rateLimiter.WaitForAllow(ctx, domain, crawlDelay); err != nil {
-		logger.Error("rate limiter error", "error", err)
-		_ = d.Nack(false)
+		if ctx.Err() != nil {
+			logger.Info("shutting down, requeueing message")
+		} else {
+			logger.Error("rate limiter error", "error", err)
+		}
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -160,12 +179,16 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		urlID, err = models.InsertURL(ctx, c.pool, msg.URL, domain, msg.Depth)
 		if err != nil {
 			logger.Error("failed to insert url", "error", err)
-			_ = d.Nack(false)
+			if err := d.Nack(false); err != nil {
+				logger.Error("failed to nack message", "error", err)
+			}
 			return
 		}
 		if urlID == "" {
 			// Race: another worker inserted it
-			_ = d.Ack()
+			if err := d.Ack(); err != nil {
+				logger.Error("failed to ack message", "error", err)
+			}
 			return
 		}
 	}
@@ -179,15 +202,14 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		retryCount, _ := models.IncrementRetryCount(ctx, c.pool, urlID)
 		if retryCount >= c.cfg.MaxRetries {
 			_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusFailed)
-			_ = d.Nack(true) // send to DLQ
-		} else {
-			timer := time.NewTimer(backoffDuration(retryCount))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-			case <-timer.C:
+			if err := d.Nack(true); err != nil {
+				logger.Error("failed to nack message to DLQ", "error", err)
 			}
-			_ = d.Nack(false) // requeue
+		} else {
+			// Message stays in PEL; reclaim loop will re-deliver after min-idle (60s)
+			if err := d.Nack(false); err != nil {
+				logger.Error("failed to nack message", "error", err)
+			}
 		}
 		return
 	}
@@ -196,14 +218,18 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	s3Key := storage.HTMLKey(msg.URL)
 	if err := c.minio.PutObject(ctx, storage.HTMLBucket, s3Key, body, "text/html"); err != nil {
 		logger.Error("failed to store html", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
 	s3Link := fmt.Sprintf("%s/%s", storage.HTMLBucket, s3Key)
 	if err := models.UpdateURLCrawled(ctx, c.pool, urlID, s3Link); err != nil {
 		logger.Error("failed to update url record", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
@@ -216,10 +242,14 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	}
 	if err := c.publisher.PublishParse(ctx, parseMsg); err != nil {
 		logger.Error("failed to publish parse message", "error", err)
-		_ = d.Nack(false)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
 		return
 	}
 
 	logger.Info("crawled successfully")
-	_ = d.Ack()
+	if err := d.Ack(); err != nil {
+		logger.Error("failed to ack message", "error", err)
+	}
 }

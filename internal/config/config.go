@@ -62,12 +62,18 @@ type MinIOConfig struct {
 }
 
 type CrawlerConfig struct {
-	Workers       int `yaml:"workers"`
-	MaxDepth      int `yaml:"max_depth"`
-	MaxRetries    int `yaml:"max_retries"`
-	TimeoutSecs   int `yaml:"timeout_secs"`
-	MaxRedirects  int `yaml:"max_redirects"`
-	PrefetchCount int `yaml:"prefetch_count"`
+	Workers       int         `yaml:"workers"`
+	MaxDepth      int         `yaml:"max_depth"`
+	MaxRetries    int         `yaml:"max_retries"`
+	TimeoutSecs   int         `yaml:"timeout_secs"`
+	MaxRedirects  int         `yaml:"max_redirects"`
+	PrefetchCount int         `yaml:"prefetch_count"`
+	Proxy         ProxyConfig `yaml:"proxy"`
+}
+
+type ProxyConfig struct {
+	File            string `yaml:"file"`
+	HealthCooldownS int    `yaml:"health_cooldown_s"`
 }
 
 type ParserConfig struct {
@@ -96,7 +102,8 @@ const (
 	defaultMaxRedirects     = 5
 	defaultPrefetchCount    = 10
 	defaultParserWorkers    = 5
-	defaultMigrationPath    = "file://internal/database/migrations"
+	defaultMigrationPath        = "file://internal/database/migrations"
+	defaultProxyHealthCooldownS = 60
 )
 
 func LoadFromEnv() *Config {
@@ -157,6 +164,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Parser.PrefetchCount == 0 {
 		c.Parser.PrefetchCount = defaultPrefetchCount
+	}
+	if c.Crawler.Proxy.HealthCooldownS == 0 {
+		c.Crawler.Proxy.HealthCooldownS = defaultProxyHealthCooldownS
 	}
 	if c.Migration.Path == "" {
 		c.Migration.Path = defaultMigrationPath
@@ -240,5 +250,16 @@ func (c *Config) applyEnvOverrides() {
 		if w, err := strconv.Atoi(v); err == nil {
 			c.Parser.Workers = w
 		}
+	}
+	if v := os.Getenv("PROXY_FILE"); v != "" {
+		c.Crawler.Proxy.File = v
+	}
+	if v := os.Getenv("PROXY_HEALTH_COOLDOWN_S"); v != "" {
+		if s, err := strconv.Atoi(v); err == nil {
+			c.Crawler.Proxy.HealthCooldownS = s
+		}
+	}
+	if v := os.Getenv("MIGRATION_PATH"); v != "" {
+		c.Migration.Path = v
 	}
 }

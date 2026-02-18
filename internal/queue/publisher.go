@@ -8,6 +8,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const streamMaxLen int64 = 100000
+
 type Publisher struct {
 	rdb *redis.Client
 }
@@ -23,6 +25,8 @@ func (p *Publisher) PublishURL(ctx context.Context, msg URLMessage) error {
 	}
 	return p.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: FrontierStream,
+		MaxLen: streamMaxLen,
+		Approx: true,
 		Values: map[string]interface{}{"payload": body},
 	}).Err()
 }
@@ -34,6 +38,8 @@ func (p *Publisher) PublishParse(ctx context.Context, msg ParseMessage) error {
 	}
 	return p.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: ParseStream,
+		MaxLen: streamMaxLen,
+		Approx: true,
 		Values: map[string]interface{}{"payload": body},
 	}).Err()
 }
