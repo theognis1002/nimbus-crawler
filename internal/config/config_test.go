@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,21 +16,24 @@ func TestPostgresConfig_DSN(t *testing.T) {
 	}
 }
 
+func TestPostgresConfig_DSN_SpecialChars(t *testing.T) {
+	t.Parallel()
+	c := PostgresConfig{Host: "db", Port: 5432, User: "user", Password: "p@ss:word/!", Database: "d"}
+	got := c.DSN()
+	if !strings.Contains(got, "postgres://") {
+		t.Errorf("DSN() = %q, expected postgres:// scheme", got)
+	}
+	if strings.Contains(got, "p@ss:word/!") {
+		t.Errorf("DSN() = %q, special chars in password should be escaped", got)
+	}
+}
+
 func TestRedisConfig_Addr(t *testing.T) {
 	t.Parallel()
 	c := RedisConfig{Host: "redis", Port: 6379}
 	want := "redis:6379"
 	if got := c.Addr(); got != want {
 		t.Errorf("Addr() = %q, want %q", got, want)
-	}
-}
-
-func TestRabbitMQConfig_URL(t *testing.T) {
-	t.Parallel()
-	c := RabbitMQConfig{Host: "rmq", Port: 5672, User: "guest", Password: "guest"}
-	want := "amqp://guest:guest@rmq:5672/"
-	if got := c.URL(); got != want {
-		t.Errorf("URL() = %q, want %q", got, want)
 	}
 }
 
@@ -54,12 +58,6 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Redis.Port != 6379 {
 		t.Errorf("Redis.Port = %d, want 6379", cfg.Redis.Port)
 	}
-	if cfg.RabbitMQ.Host != "localhost" {
-		t.Errorf("RabbitMQ.Host = %q, want localhost", cfg.RabbitMQ.Host)
-	}
-	if cfg.RabbitMQ.Port != 5672 {
-		t.Errorf("RabbitMQ.Port = %d, want 5672", cfg.RabbitMQ.Port)
-	}
 	if cfg.Crawler.Workers != 10 {
 		t.Errorf("Crawler.Workers = %d, want 10", cfg.Crawler.Workers)
 	}
@@ -79,8 +77,6 @@ func TestLoadFromEnv_EnvOverrides(t *testing.T) {
 	t.Setenv("POSTGRES_DB", "mydb")
 	t.Setenv("REDIS_HOST", "redis-host")
 	t.Setenv("REDIS_PORT", "7777")
-	t.Setenv("RABBITMQ_HOST", "rmq-host")
-	t.Setenv("RABBITMQ_PORT", "8888")
 	t.Setenv("CRAWLER_WORKERS", "20")
 	t.Setenv("PARSER_WORKERS", "15")
 	t.Setenv("MAX_DEPTH", "5")
@@ -109,9 +105,6 @@ func TestLoadFromEnv_EnvOverrides(t *testing.T) {
 	}
 	if cfg.Redis.Port != 7777 {
 		t.Errorf("Redis.Port = %d, want 7777", cfg.Redis.Port)
-	}
-	if cfg.RabbitMQ.Host != "rmq-host" {
-		t.Errorf("RabbitMQ.Host = %q, want rmq-host", cfg.RabbitMQ.Host)
 	}
 	if cfg.Crawler.Workers != 20 {
 		t.Errorf("Crawler.Workers = %d, want 20", cfg.Crawler.Workers)

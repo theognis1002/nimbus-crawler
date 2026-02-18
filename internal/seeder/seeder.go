@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
+	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
 )
 
 func LoadAndPublish(ctx context.Context, seedFile string, pool *pgxpool.Pool, publisher *queue.Publisher, logger *slog.Logger) error {
@@ -36,13 +37,18 @@ func LoadAndPublish(ctx context.Context, seedFile string, pool *pgxpool.Pool, pu
 			continue
 		}
 
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			logger.Warn("unsupported scheme in seed url", "url", line, "scheme", parsed.Scheme)
+			continue
+		}
+
 		domain := parsed.Hostname()
 		if domain == "" {
 			logger.Warn("no domain in seed url", "url", line)
 			continue
 		}
 
-		if err := models.UpsertDomain(ctx, pool, domain, 1000); err != nil {
+		if err := models.UpsertDomain(ctx, pool, domain, robots.DefaultCrawlDelayMs); err != nil {
 			logger.Warn("failed to upsert domain", "domain", domain, "error", err)
 			continue
 		}

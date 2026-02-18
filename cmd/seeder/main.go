@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/database"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
@@ -29,18 +30,19 @@ func main() {
 	}
 	defer pool.Close()
 
-	qConn, err := queue.NewConnection(cfg.RabbitMQ.URL(), logger)
+	rdb, err := cache.NewRedisClient(ctx, cfg.Redis)
 	if err != nil {
-		logger.Error("failed to connect to rabbitmq", "error", err)
+		logger.Error("failed to connect to redis", "error", err)
 		os.Exit(1)
 	}
-	defer qConn.Close()
+	defer rdb.Close()
 
-	publisher, err := queue.NewPublisher(qConn)
-	if err != nil {
-		logger.Error("failed to create publisher", "error", err)
+	if err := queue.EnsureStreams(ctx, rdb, logger); err != nil {
+		logger.Error("failed to ensure streams", "error", err)
 		os.Exit(1)
 	}
+
+	publisher := queue.NewPublisher(rdb)
 	defer publisher.Close()
 
 	seedFile := "seeds.txt"

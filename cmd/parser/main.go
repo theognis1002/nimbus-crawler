@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -41,25 +42,12 @@ func main() {
 	}
 	defer rdb.Close()
 
-	_ = rdb // used for future features (rate limiting, caching)
-
-	qConn, err := queue.NewConnection(cfg.RabbitMQ.URL(), logger)
-	if err != nil {
-		logger.Error("failed to connect to rabbitmq", "error", err)
-		os.Exit(1)
-	}
-	defer qConn.Close()
-
-	if err := qConn.SetPrefetch(cfg.Parser.PrefetchCount); err != nil {
-		logger.Error("failed to set prefetch", "error", err)
+	if err := queue.EnsureStreams(ctx, rdb, logger); err != nil {
+		logger.Error("failed to ensure streams", "error", err)
 		os.Exit(1)
 	}
 
-	publisher, err := queue.NewPublisher(qConn)
-	if err != nil {
-		logger.Error("failed to create publisher", "error", err)
-		os.Exit(1)
-	}
+	publisher := queue.NewPublisher(rdb)
 	defer publisher.Close()
 
 	minioClient, err := storage.NewMinIOClient(ctx, cfg.MinIO)
@@ -70,20 +58,9 @@ func main() {
 
 	p := internalparser.New(cfg.Parser, pool, publisher, minioClient, logger)
 
-	deliveries, err := queue.Consume(qConn, queue.ParseQueue)
-	if err != nil {
-		logger.Error("failed to start consuming", "error", err)
-		os.Exit(1)
-	}
-
-	// Monitor RabbitMQ connection; exit on disconnect so container restarts
-	go func() {
-		err := <-qConn.NotifyClose()
-		if err != nil {
-			logger.Error("rabbitmq connection lost", "error", err)
-		}
-		cancel()
-	}()
+	consumerName := fmt.Sprintf("parser-%d", os.Getpid())
+	consumer := queue.NewConsumer(rdb, queue.ParseStream, queue.ParseDLQ, queue.ParserGroup, consumerName, cfg.Parser.PrefetchCount, logger)
+	deliveries := consumer.Run(ctx)
 
 	logger.Info("parser starting", "workers", cfg.Parser.Workers, "max_depth", cfg.Parser.MaxDepth)
 	p.Run(ctx, deliveries)

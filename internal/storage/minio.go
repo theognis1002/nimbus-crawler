@@ -11,6 +11,10 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// maxObjectSize is the read limit for MinIO objects.
+// Matches crawler.maxBodyBytes to avoid reading more than was stored.
+const maxObjectSize = 10 * 1024 * 1024 // 10MB
+
 type MinIOClient struct {
 	client *minio.Client
 }
@@ -65,7 +69,6 @@ func (m *MinIOClient) GetObject(ctx context.Context, bucket, key string) ([]byte
 	}
 	defer obj.Close()
 
-	const maxObjectSize = 10 * 1024 * 1024 // 10MB
 	data, err := io.ReadAll(io.LimitReader(obj, maxObjectSize))
 	if err != nil {
 		return nil, fmt.Errorf("reading object %s/%s: %w", bucket, key, err)

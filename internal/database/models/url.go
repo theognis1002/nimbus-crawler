@@ -9,6 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type URLStatus string
+
+const (
+	StatusPending  URLStatus = "pending"
+	StatusCrawling URLStatus = "crawling"
+	StatusCrawled  URLStatus = "crawled"
+	StatusParsed   URLStatus = "parsed"
+	StatusFailed   URLStatus = "failed"
+	StatusSkipped  URLStatus = "skipped"
+)
+
 type URLRecord struct {
 	ID            string
 	URL           string
@@ -79,7 +90,7 @@ func GetURLByURL(ctx context.Context, pool *pgxpool.Pool, url string) (*URLRecor
 	return r, nil
 }
 
-func UpdateURLStatus(ctx context.Context, pool *pgxpool.Pool, id string, status string) error {
+func UpdateURLStatus(ctx context.Context, pool *pgxpool.Pool, id string, status URLStatus) error {
 	_, err := pool.Exec(ctx,
 		`UPDATE urls SET status = $2, updated_at = NOW() WHERE id = $1`,
 		id, status)

@@ -17,7 +17,7 @@ Thanks for your interest in contributing! Here's how to get started.
 3. Start infrastructure services:
 
    ```bash
-   docker-compose up -d postgres redis rabbitmq minio
+   docker-compose up -d postgres redis minio
    ```
 
 4. Run the migration:

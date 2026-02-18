@@ -26,6 +26,11 @@ end
 return 0
 `)
 
+const (
+	rateLimitKeyPrefix = "ratelimit:"
+	jitterFactor       = 0.5
+)
+
 type RateLimiter struct {
 	client *redis.Client
 }
@@ -39,7 +44,7 @@ func NewRateLimiter(client *redis.Client) *RateLimiter {
 // limit is the max number of requests in that window (typically 1).
 // Returns true if allowed, false if rate-limited.
 func (r *RateLimiter) Allow(ctx context.Context, domain string, windowMs int, limit int) (bool, error) {
-	key := fmt.Sprintf("ratelimit:%s", domain)
+	key := rateLimitKeyPrefix + domain
 	now := time.Now().UnixMilli()
 
 	result, err := slidingWindowScript.Run(ctx, r.client, []string{key}, now, windowMs, limit).Int()
@@ -61,7 +66,7 @@ func (r *RateLimiter) WaitForAllow(ctx context.Context, domain string, crawlDela
 			return nil
 		}
 
-		jitter := time.Duration(float64(crawlDelayMs)*0.5*rand.Float64()) * time.Millisecond
+		jitter := time.Duration(float64(crawlDelayMs)*jitterFactor*rand.Float64()) * time.Millisecond
 		wait := time.Duration(crawlDelayMs)*time.Millisecond/2 + jitter
 
 		select {

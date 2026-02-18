@@ -9,6 +9,16 @@ import (
 	"time"
 
 	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
+	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
+)
+
+const (
+	maxBodyBytes        = 10 * 1024 * 1024 // 10MB
+	dialTimeout         = 10 * time.Second
+	maxIdleConns        = 100
+	maxIdleConnsPerHost = 10
+	idleConnTimeout     = 90 * time.Second
+	acceptHeader        = "text/html,application/xhtml+xml"
 )
 
 type Fetcher struct {
@@ -17,7 +27,7 @@ type Fetcher struct {
 }
 
 func NewFetcher(dnsCache *cache.DNSCache, timeoutSecs, maxRedirects int) *Fetcher {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	dialer := &net.Dialer{Timeout: dialTimeout}
 
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -33,9 +43,9 @@ func NewFetcher(dnsCache *cache.DNSCache, timeoutSecs, maxRedirects int) *Fetche
 
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
 		},
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        maxIdleConns,
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
+		IdleConnTimeout:     idleConnTimeout,
 	}
 
 	client := &http.Client{
@@ -58,8 +68,8 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, int, error)
 		return nil, 0, fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "NimbusCrawler/1.0")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("User-Agent", robots.CrawlerUserAgent)
+	req.Header.Set("Accept", acceptHeader)
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -67,7 +77,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, int, error)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", err)
 	}

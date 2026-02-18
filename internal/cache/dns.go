@@ -10,7 +10,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const dnsTTL = 5 * time.Minute
+const (
+	dnsTTL       = 5 * time.Minute
+	dnsKeyPrefix = "dns:"
+)
 
 type DNSCache struct {
 	client *redis.Client
@@ -21,7 +24,7 @@ func NewDNSCache(client *redis.Client) *DNSCache {
 }
 
 func (d *DNSCache) LookupHost(ctx context.Context, host string) (string, error) {
-	key := fmt.Sprintf("dns:%s", host)
+	key := dnsKeyPrefix + host
 
 	cached, err := d.client.Get(ctx, key).Result()
 	if err == nil {

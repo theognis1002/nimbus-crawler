@@ -13,7 +13,6 @@ import (
 type Config struct {
 	Postgres  PostgresConfig  `yaml:"postgres"`
 	Redis     RedisConfig     `yaml:"redis"`
-	RabbitMQ  RabbitMQConfig  `yaml:"rabbitmq"`
 	MinIO     MinIOConfig     `yaml:"minio"`
 	Crawler   CrawlerConfig   `yaml:"crawler"`
 	Parser    ParserConfig    `yaml:"parser"`
@@ -35,8 +34,14 @@ func (c PostgresConfig) DSN() string {
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		url.PathEscape(c.User), url.PathEscape(c.Password), c.Host, c.Port, c.Database, sslmode)
+	u := &url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(c.User, c.Password),
+		Host:     fmt.Sprintf("%s:%d", c.Host, c.Port),
+		Path:     c.Database,
+		RawQuery: fmt.Sprintf("sslmode=%s", sslmode),
+	}
+	return u.String()
 }
 
 type RedisConfig struct {
@@ -47,18 +52,6 @@ type RedisConfig struct {
 
 func (c RedisConfig) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
-}
-
-type RabbitMQConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-}
-
-func (c RabbitMQConfig) URL() string {
-	return fmt.Sprintf("amqp://%s:%s@%s:%d/",
-		url.PathEscape(c.User), url.PathEscape(c.Password), c.Host, c.Port)
 }
 
 type MinIOConfig struct {
@@ -87,6 +80,25 @@ type MigrationConfig struct {
 	Path string `yaml:"path"`
 }
 
+const (
+	defaultPostgresHost     = "localhost"
+	defaultPostgresPort     = 5432
+	defaultPostgresUser     = "nimbus"
+	defaultPostgresDB       = "nimbus"
+	defaultPostgresMaxConns = 20
+	defaultRedisHost        = "localhost"
+	defaultRedisPort        = 6379
+	defaultMinIOEndpoint    = "localhost:9000"
+	defaultCrawlerWorkers   = 10
+	defaultMaxDepth         = 3
+	defaultMaxRetries       = 3
+	defaultTimeoutSecs      = 30
+	defaultMaxRedirects     = 5
+	defaultPrefetchCount    = 10
+	defaultParserWorkers    = 5
+	defaultMigrationPath    = "file://internal/database/migrations"
+)
+
 func LoadFromEnv() *Config {
 	cfg := &Config{}
 	cfg.applyDefaults()
@@ -96,67 +108,58 @@ func LoadFromEnv() *Config {
 
 func (c *Config) applyDefaults() {
 	if c.Postgres.Host == "" {
-		c.Postgres.Host = "localhost"
+		c.Postgres.Host = defaultPostgresHost
 	}
 	if c.Postgres.Port == 0 {
-		c.Postgres.Port = 5432
+		c.Postgres.Port = defaultPostgresPort
 	}
 	if c.Postgres.User == "" {
-		c.Postgres.User = "nimbus"
+		c.Postgres.User = defaultPostgresUser
 	}
 	if c.Postgres.Database == "" {
-		c.Postgres.Database = "nimbus"
+		c.Postgres.Database = defaultPostgresDB
 	}
 	if c.Postgres.MaxConns == 0 {
-		c.Postgres.MaxConns = 20
+		c.Postgres.MaxConns = defaultPostgresMaxConns
 	}
 	if c.Redis.Host == "" {
-		c.Redis.Host = "localhost"
+		c.Redis.Host = defaultRedisHost
 	}
 	if c.Redis.Port == 0 {
-		c.Redis.Port = 6379
-	}
-	if c.RabbitMQ.Host == "" {
-		c.RabbitMQ.Host = "localhost"
-	}
-	if c.RabbitMQ.Port == 0 {
-		c.RabbitMQ.Port = 5672
-	}
-	if c.RabbitMQ.User == "" {
-		c.RabbitMQ.User = "guest"
+		c.Redis.Port = defaultRedisPort
 	}
 	if c.MinIO.Endpoint == "" {
-		c.MinIO.Endpoint = "localhost:9000"
+		c.MinIO.Endpoint = defaultMinIOEndpoint
 	}
 	if c.Crawler.Workers == 0 {
-		c.Crawler.Workers = 10
+		c.Crawler.Workers = defaultCrawlerWorkers
 	}
 	if c.Crawler.MaxDepth == 0 {
-		c.Crawler.MaxDepth = 3
+		c.Crawler.MaxDepth = defaultMaxDepth
 	}
 	if c.Crawler.MaxRetries == 0 {
-		c.Crawler.MaxRetries = 3
+		c.Crawler.MaxRetries = defaultMaxRetries
 	}
 	if c.Crawler.TimeoutSecs == 0 {
-		c.Crawler.TimeoutSecs = 30
+		c.Crawler.TimeoutSecs = defaultTimeoutSecs
 	}
 	if c.Crawler.MaxRedirects == 0 {
-		c.Crawler.MaxRedirects = 5
+		c.Crawler.MaxRedirects = defaultMaxRedirects
 	}
 	if c.Crawler.PrefetchCount == 0 {
-		c.Crawler.PrefetchCount = 10
+		c.Crawler.PrefetchCount = defaultPrefetchCount
 	}
 	if c.Parser.Workers == 0 {
-		c.Parser.Workers = 5
+		c.Parser.Workers = defaultParserWorkers
 	}
 	if c.Parser.MaxDepth == 0 {
-		c.Parser.MaxDepth = 3
+		c.Parser.MaxDepth = defaultMaxDepth
 	}
 	if c.Parser.PrefetchCount == 0 {
-		c.Parser.PrefetchCount = 10
+		c.Parser.PrefetchCount = defaultPrefetchCount
 	}
 	if c.Migration.Path == "" {
-		c.Migration.Path = "file://migrations"
+		c.Migration.Path = defaultMigrationPath
 	}
 }
 
@@ -209,20 +212,6 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
 		c.Redis.Password = v
-	}
-	if v := os.Getenv("RABBITMQ_HOST"); v != "" {
-		c.RabbitMQ.Host = v
-	}
-	if v := os.Getenv("RABBITMQ_PORT"); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			c.RabbitMQ.Port = p
-		}
-	}
-	if v := os.Getenv("RABBITMQ_USER"); v != "" {
-		c.RabbitMQ.User = v
-	}
-	if v := os.Getenv("RABBITMQ_PASSWORD"); v != "" {
-		c.RabbitMQ.Password = v
 	}
 	if v := os.Getenv("MINIO_ENDPOINT"); v != "" {
 		c.MinIO.Endpoint = v

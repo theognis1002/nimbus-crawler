@@ -14,8 +14,8 @@ import (
 	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
+	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/storage"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Parser struct {
@@ -42,7 +42,7 @@ func New(
 	}
 }
 
-func (p *Parser) Run(ctx context.Context, deliveries <-chan amqp.Delivery) {
+func (p *Parser) Run(ctx context.Context, deliveries <-chan queue.Delivery) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < p.cfg.Workers; i++ {
@@ -57,7 +57,7 @@ func (p *Parser) Run(ctx context.Context, deliveries <-chan amqp.Delivery) {
 	p.logger.Info("all parser workers stopped")
 }
 
-func (p *Parser) worker(ctx context.Context, id int, deliveries <-chan amqp.Delivery) {
+func (p *Parser) worker(ctx context.Context, id int, deliveries <-chan queue.Delivery) {
 	logger := p.logger.With("worker", id)
 	logger.Info("parser worker started")
 
@@ -76,11 +76,11 @@ func (p *Parser) worker(ctx context.Context, id int, deliveries <-chan amqp.Deli
 	}
 }
 
-func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp.Delivery) {
+func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d queue.Delivery) {
 	var msg queue.ParseMessage
 	if err := json.Unmarshal(d.Body, &msg); err != nil {
 		logger.Error("failed to unmarshal message", "error", err)
-		_ = d.Nack(false, false)
+		_ = d.Nack(true)
 		return
 	}
 
@@ -90,14 +90,14 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 	parts := strings.SplitN(msg.S3HTMLLink, "/", 2)
 	if len(parts) != 2 {
 		logger.Error("invalid s3 link", "link", msg.S3HTMLLink)
-		_ = d.Nack(false, false)
+		_ = d.Nack(true)
 		return
 	}
 
 	htmlData, err := p.minio.GetObject(ctx, parts[0], parts[1])
 	if err != nil {
 		logger.Error("failed to get html from minio", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
@@ -109,8 +109,8 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 	}
 	if exists {
 		logger.Debug("duplicate content, skipping")
-		_ = models.UpdateURLStatus(ctx, p.pool, msg.URLID, "skipped")
-		_ = d.Ack(false)
+		_ = models.UpdateURLStatus(ctx, p.pool, msg.URLID, models.StatusSkipped)
+		_ = d.Ack()
 		return
 	}
 
@@ -118,7 +118,7 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(htmlData))
 	if err != nil {
 		logger.Error("failed to parse html", "error", err)
-		_ = d.Nack(false, false)
+		_ = d.Nack(true)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 	textKey := storage.TextKey(msg.URL)
 	if err := p.minio.PutObject(ctx, storage.TextBucket, textKey, []byte(text), "text/plain"); err != nil {
 		logger.Error("failed to store text", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 	s3TextLink := storage.TextBucket + "/" + textKey
@@ -150,7 +150,7 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 			if domain == "" {
 				continue
 			}
-			if err := models.UpsertDomain(ctx, p.pool, domain, 1000); err != nil {
+			if err := models.UpsertDomain(ctx, p.pool, domain, robots.DefaultCrawlDelayMs); err != nil {
 				logger.Warn("failed to upsert domain", "domain", domain, "error", err)
 				continue
 			}
@@ -175,10 +175,10 @@ func (p *Parser) processMessage(ctx context.Context, logger *slog.Logger, d amqp
 	// Update URL record
 	if err := models.UpdateURLParsed(ctx, p.pool, msg.URLID, hash, s3TextLink); err != nil {
 		logger.Error("failed to update url record", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
 	logger.Info("parsed successfully", "extracted_urls", len(extractedURLs))
-	_ = d.Ack(false)
+	_ = d.Ack()
 }

@@ -4,22 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
 type Publisher struct {
-	mu sync.Mutex
-	ch *amqp.Channel
+	rdb *redis.Client
 }
 
-func NewPublisher(conn *Connection) (*Publisher, error) {
-	ch, err := conn.NewPublishChannel()
-	if err != nil {
-		return nil, err
-	}
-	return &Publisher{ch: ch}, nil
+func NewPublisher(rdb *redis.Client) *Publisher {
+	return &Publisher{rdb: rdb}
 }
 
 func (p *Publisher) PublishURL(ctx context.Context, msg URLMessage) error {
@@ -27,9 +21,10 @@ func (p *Publisher) PublishURL(ctx context.Context, msg URLMessage) error {
 	if err != nil {
 		return fmt.Errorf("marshaling url message: %w", err)
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return Publish(ctx, p.ch, RoutingKeyCrawl, body)
+	return p.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: FrontierStream,
+		Values: map[string]interface{}{"payload": body},
+	}).Err()
 }
 
 func (p *Publisher) PublishParse(ctx context.Context, msg ParseMessage) error {
@@ -37,15 +32,10 @@ func (p *Publisher) PublishParse(ctx context.Context, msg ParseMessage) error {
 	if err != nil {
 		return fmt.Errorf("marshaling parse message: %w", err)
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return Publish(ctx, p.ch, RoutingKeyParse, body)
+	return p.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: ParseStream,
+		Values: map[string]interface{}{"payload": body},
+	}).Err()
 }
 
-func (p *Publisher) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.ch != nil {
-		p.ch.Close()
-	}
-}
+func (p *Publisher) Close() {}

@@ -18,7 +18,6 @@ import (
 	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/storage"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Crawler struct {
@@ -54,7 +53,7 @@ func New(
 	}
 }
 
-func (c *Crawler) Run(ctx context.Context, deliveries <-chan amqp.Delivery) {
+func (c *Crawler) Run(ctx context.Context, deliveries <-chan queue.Delivery) {
 	var wg sync.WaitGroup
 
 	for i := 0; i < c.cfg.Workers; i++ {
@@ -69,7 +68,7 @@ func (c *Crawler) Run(ctx context.Context, deliveries <-chan amqp.Delivery) {
 	c.logger.Info("all crawler workers stopped")
 }
 
-func (c *Crawler) worker(ctx context.Context, id int, deliveries <-chan amqp.Delivery) {
+func (c *Crawler) worker(ctx context.Context, id int, deliveries <-chan queue.Delivery) {
 	logger := c.logger.With("worker", id)
 	logger.Info("crawler worker started")
 
@@ -88,11 +87,11 @@ func (c *Crawler) worker(ctx context.Context, id int, deliveries <-chan amqp.Del
 	}
 }
 
-func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amqp.Delivery) {
+func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d queue.Delivery) {
 	var msg queue.URLMessage
 	if err := json.Unmarshal(d.Body, &msg); err != nil {
 		logger.Error("failed to unmarshal message", "error", err)
-		_ = d.Nack(false, false)
+		_ = d.Nack(true)
 		return
 	}
 
@@ -100,7 +99,7 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 
 	if msg.Depth > c.cfg.MaxDepth {
 		logger.Debug("max depth exceeded, skipping")
-		_ = d.Ack(false)
+		_ = d.Ack()
 		return
 	}
 
@@ -108,27 +107,27 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 	existing, err := models.GetURLByURL(ctx, c.pool, msg.URL)
 	if err != nil && err != pgx.ErrNoRows {
 		logger.Error("failed to check url status", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
-	if existing != nil && (existing.Status == "crawled" || existing.Status == "parsed") {
+	if existing != nil && (existing.Status == string(models.StatusCrawled) || existing.Status == string(models.StatusParsed)) {
 		logger.Debug("already crawled, skipping")
-		_ = d.Ack(false)
+		_ = d.Ack()
 		return
 	}
 
 	parsed, err := url.Parse(msg.URL)
 	if err != nil {
 		logger.Error("invalid url", "error", err)
-		_ = d.Ack(false)
+		_ = d.Ack()
 		return
 	}
 	domain := parsed.Hostname()
 
 	// Ensure domain exists
-	if err := models.UpsertDomain(ctx, c.pool, domain, 1000); err != nil {
+	if err := models.UpsertDomain(ctx, c.pool, domain, robots.DefaultCrawlDelayMs); err != nil {
 		logger.Error("failed to upsert domain", "domain", domain, "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
@@ -140,16 +139,16 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 	if !allowed {
 		logger.Debug("disallowed by robots.txt")
 		if existing != nil {
-			_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, "skipped")
+			_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, models.StatusSkipped)
 		}
-		_ = d.Ack(false)
+		_ = d.Ack()
 		return
 	}
 
 	// Rate limit
 	if err := c.rateLimiter.WaitForAllow(ctx, domain, crawlDelay); err != nil {
 		logger.Error("rate limiter error", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
@@ -161,17 +160,17 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 		urlID, err = models.InsertURL(ctx, c.pool, msg.URL, domain, msg.Depth)
 		if err != nil {
 			logger.Error("failed to insert url", "error", err)
-			_ = d.Nack(false, true)
+			_ = d.Nack(false)
 			return
 		}
 		if urlID == "" {
 			// Race: another worker inserted it
-			_ = d.Ack(false)
+			_ = d.Ack()
 			return
 		}
 	}
 
-	_ = models.UpdateURLStatus(ctx, c.pool, urlID, "crawling")
+	_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusCrawling)
 
 	// Fetch
 	body, statusCode, err := c.fetcher.Fetch(ctx, msg.URL)
@@ -179,8 +178,8 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 		logger.Warn("fetch failed", "error", err, "status", statusCode)
 		retryCount, _ := models.IncrementRetryCount(ctx, c.pool, urlID)
 		if retryCount >= c.cfg.MaxRetries {
-			_ = models.UpdateURLStatus(ctx, c.pool, urlID, "failed")
-			_ = d.Nack(false, false) // send to DLQ
+			_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusFailed)
+			_ = d.Nack(true) // send to DLQ
 		} else {
 			timer := time.NewTimer(backoffDuration(retryCount))
 			select {
@@ -188,7 +187,7 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 				timer.Stop()
 			case <-timer.C:
 			}
-			_ = d.Nack(false, true) // requeue
+			_ = d.Nack(false) // requeue
 		}
 		return
 	}
@@ -197,14 +196,14 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 	s3Key := storage.HTMLKey(msg.URL)
 	if err := c.minio.PutObject(ctx, storage.HTMLBucket, s3Key, body, "text/html"); err != nil {
 		logger.Error("failed to store html", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
 	s3Link := fmt.Sprintf("%s/%s", storage.HTMLBucket, s3Key)
 	if err := models.UpdateURLCrawled(ctx, c.pool, urlID, s3Link); err != nil {
 		logger.Error("failed to update url record", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
@@ -217,10 +216,10 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d amq
 	}
 	if err := c.publisher.PublishParse(ctx, parseMsg); err != nil {
 		logger.Error("failed to publish parse message", "error", err)
-		_ = d.Nack(false, true)
+		_ = d.Nack(false)
 		return
 	}
 
 	logger.Info("crawled successfully")
-	_ = d.Ack(false)
+	_ = d.Ack()
 }

@@ -11,12 +11,6 @@ redis:
   host: ${REDIS_HOST}
   port: 6379
 
-rabbitmq:
-  host: ${RABBITMQ_HOST}
-  port: 5672
-  user: ${RABBITMQ_USER}
-  password: ${RABBITMQ_PASSWORD}
-
 minio:
   endpoint: ${MINIO_ENDPOINT}
   access_key: ${MINIO_ACCESS_KEY}

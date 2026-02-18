@@ -5,6 +5,10 @@
 *.so
 *.dylib
 bin/
+/crawler
+/parser
+/migrate
+/seeder
 
 # Test
 *.test

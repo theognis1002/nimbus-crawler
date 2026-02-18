@@ -17,6 +17,10 @@ LICENSE
 !.env.example
 
 bin/
+crawler
+parser
+migrate
+seeder
 tmp/
 vendor/
 
