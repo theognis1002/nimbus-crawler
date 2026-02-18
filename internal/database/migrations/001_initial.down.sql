@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS urls;
+DROP TABLE IF EXISTS domains;
+DROP TYPE IF EXISTS url_status;

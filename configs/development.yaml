@@ -1,0 +1,38 @@
+postgres:
+  host: postgres
+  port: 5432
+  user: nimbus
+  password: nimbus_secret
+  database: nimbus
+
+redis:
+  host: redis
+  port: 6379
+
+rabbitmq:
+  host: rabbitmq
+  port: 5672
+  user: nimbus
+  password: nimbus_secret
+
+minio:
+  endpoint: minio:9000
+  access_key: nimbus
+  secret_key: nimbus_secret
+  use_ssl: false
+
+crawler:
+  workers: 10
+  max_depth: 3
+  max_retries: 3
+  timeout_secs: 30
+  max_redirects: 5
+  prefetch_count: 10
+
+parser:
+  workers: 5
+  max_depth: 3
+  prefetch_count: 10
+
+migration:
+  path: "file://migrations"

@@ -1,0 +1,4 @@
+# Default seed URLs for Nimbus Crawler
+https://example.com
+https://www.wikipedia.org
+https://news.ycombinator.com
