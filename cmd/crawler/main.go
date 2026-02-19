@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/crawler"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/database"
+	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/storage"
@@ -73,6 +75,13 @@ func run(logger *slog.Logger) error {
 	}
 
 	fetcher := crawler.NewFetcher(dnsCache, proxyPool, cfg.Crawler.TimeoutSecs, cfg.Crawler.MaxRedirects, logger)
+
+	count, err := models.ResetStaleCrawlingURLs(ctx, pool, 5*time.Minute)
+	if err != nil {
+		logger.Error("failed to reset stale crawling urls", "error", err)
+	} else if count > 0 {
+		logger.Info("reset stale crawling urls", "count", count)
+	}
 
 	c := crawler.New(cfg.Crawler, pool, fetcher, publisher, rateLimiter, robotsChecker, minioClient, logger)
 

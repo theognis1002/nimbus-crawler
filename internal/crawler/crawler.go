@@ -234,6 +234,10 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		return
 	}
 
+	if err := models.UpdateDomainLastCrawlTime(ctx, c.pool, domain); err != nil {
+		logger.Warn("failed to update domain last_crawl_time", "domain", domain, "error", err)
+	}
+
 	// Publish parse message
 	parseMsg := queue.ParseMessage{
 		URLID:      urlID,

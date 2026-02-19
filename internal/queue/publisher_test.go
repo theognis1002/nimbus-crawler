@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -100,6 +101,78 @@ func TestPublishURLBatch_ExactChunkBoundary(t *testing.T) {
 	}
 	if length != int64(pipelineBatchMax) {
 		t.Errorf("stream length = %d, want %d", length, pipelineBatchMax)
+	}
+}
+
+func TestPublishURL(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	p := NewPublisher(rdb)
+
+	msg := URLMessage{URL: "https://example.com/page", Depth: 2}
+	if err := p.PublishURL(context.Background(), msg); err != nil {
+		t.Fatalf("PublishURL: %v", err)
+	}
+
+	// Read the stream entry and verify payload
+	entries, err := rdb.XRange(context.Background(), FrontierStream, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+
+	payload, ok := entries[0].Values["payload"].(string)
+	if !ok {
+		t.Fatal("payload field not found or not a string")
+	}
+
+	var got URLMessage
+	if err := json.Unmarshal([]byte(payload), &got); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if got.URL != msg.URL || got.Depth != msg.Depth {
+		t.Errorf("got %+v, want %+v", got, msg)
+	}
+}
+
+func TestPublishParse(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	p := NewPublisher(rdb)
+
+	msg := ParseMessage{
+		URLID:      "uuid-123",
+		URL:        "https://example.com/page",
+		S3HTMLLink: "html/uuid-123.html",
+		Depth:      1,
+	}
+	if err := p.PublishParse(context.Background(), msg); err != nil {
+		t.Fatalf("PublishParse: %v", err)
+	}
+
+	entries, err := rdb.XRange(context.Background(), ParseStream, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+
+	payload, ok := entries[0].Values["payload"].(string)
+	if !ok {
+		t.Fatal("payload field not found or not a string")
+	}
+
+	var got ParseMessage
+	if err := json.Unmarshal([]byte(payload), &got); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if got != msg {
+		t.Errorf("got %+v, want %+v", got, msg)
 	}
 }
 

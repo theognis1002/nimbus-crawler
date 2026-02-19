@@ -152,6 +152,17 @@ func IncrementRetryAndMaybeFailURL(ctx context.Context, pool *pgxpool.Pool, id s
 	return count, err
 }
 
+func ResetStaleCrawlingURLs(ctx context.Context, pool *pgxpool.Pool, staleDuration time.Duration) (int64, error) {
+	tag, err := pool.Exec(ctx,
+		`UPDATE urls SET status = 'pending', updated_at = NOW()
+		 WHERE status = 'crawling' AND updated_at < NOW() - $1::interval`,
+		staleDuration.String())
+	if err != nil {
+		return 0, fmt.Errorf("resetting stale crawling urls: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func ContentHashExists(ctx context.Context, pool *pgxpool.Pool, hash string) (bool, error) {
 	var exists bool
 	err := pool.QueryRow(ctx,
