@@ -67,6 +67,15 @@ func TestLoadFromEnv_Defaults(t *testing.T) {
 	if cfg.Parser.Workers != 5 {
 		t.Errorf("Parser.Workers = %d, want 5", cfg.Parser.Workers)
 	}
+	if cfg.Postgres.MinConns != 2 {
+		t.Errorf("Postgres.MinConns = %d, want 2", cfg.Postgres.MinConns)
+	}
+	if cfg.Redis.PoolSize != 50 {
+		t.Errorf("Redis.PoolSize = %d, want 50", cfg.Redis.PoolSize)
+	}
+	if cfg.Redis.MinIdleConns != 5 {
+		t.Errorf("Redis.MinIdleConns = %d, want 5", cfg.Redis.MinIdleConns)
+	}
 }
 
 func TestLoadFromEnv_EnvOverrides(t *testing.T) {
@@ -123,6 +132,24 @@ func TestLoadFromEnv_EnvOverrides(t *testing.T) {
 	}
 	if !cfg.MinIO.UseSSL {
 		t.Error("MinIO.UseSSL should be true")
+	}
+}
+
+func TestLoadFromEnv_PoolOverrides(t *testing.T) {
+	t.Setenv("POSTGRES_MIN_CONNS", "8")
+	t.Setenv("REDIS_POOL_SIZE", "100")
+	t.Setenv("REDIS_MIN_IDLE_CONNS", "10")
+
+	cfg := LoadFromEnv()
+
+	if cfg.Postgres.MinConns != 8 {
+		t.Errorf("Postgres.MinConns = %d, want 8", cfg.Postgres.MinConns)
+	}
+	if cfg.Redis.PoolSize != 100 {
+		t.Errorf("Redis.PoolSize = %d, want 100", cfg.Redis.PoolSize)
+	}
+	if cfg.Redis.MinIdleConns != 10 {
+		t.Errorf("Redis.MinIdleConns = %d, want 10", cfg.Redis.MinIdleConns)
 	}
 }
 

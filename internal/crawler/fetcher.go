@@ -48,9 +48,11 @@ func NewFetcher(dnsCache *cache.DNSCache, proxyPool *ProxyPool, timeoutSecs, max
 
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
 		},
-		MaxIdleConns:        maxIdleConns,
-		MaxIdleConnsPerHost: maxIdleConnsPerHost,
-		IdleConnTimeout:     idleConnTimeout,
+		MaxIdleConns:          maxIdleConns,
+		MaxIdleConnsPerHost:   maxIdleConnsPerHost,
+		IdleConnTimeout:       idleConnTimeout,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
 	}
 
 	checkRedirect := func(req *http.Request, via []*http.Request) error {
@@ -77,10 +79,12 @@ func NewFetcher(dnsCache *cache.DNSCache, proxyPool *ProxyPool, timeoutSecs, max
 		f.proxyClients = make(map[string]*http.Client, proxyPool.Len())
 		for _, proxyURL := range proxyPool.proxies {
 			transport := &http.Transport{
-				Proxy:               http.ProxyURL(proxyURL),
-				MaxIdleConns:        maxIdleConns,
-				MaxIdleConnsPerHost: maxIdleConnsPerHost,
-				IdleConnTimeout:     idleConnTimeout,
+				Proxy:                 http.ProxyURL(proxyURL),
+				MaxIdleConns:          maxIdleConns,
+				MaxIdleConnsPerHost:   maxIdleConnsPerHost,
+				IdleConnTimeout:       idleConnTimeout,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
 			}
 			f.proxyClients[proxyURL.String()] = &http.Client{
 				Transport:     transport,

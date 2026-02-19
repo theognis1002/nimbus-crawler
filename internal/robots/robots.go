@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -71,29 +73,45 @@ func (c *Checker) IsAllowed(ctx context.Context, rawURL, domain string) (bool, i
 		group = robots.FindGroup("*")
 	}
 
-	return group.Test(rawURL), crawlDelay, nil
+	// group.Test expects a path, not a full URL
+	testPath := rawURL
+	if parsed, err := url.Parse(rawURL); err == nil {
+		testPath = parsed.RequestURI()
+	}
+
+	return group.Test(testPath), crawlDelay, nil
+}
+
+func (c *Checker) cacheRobotsHash(ctx context.Context, key, body string, delay int) {
+	pipe := c.rdb.Pipeline()
+	pipe.HSet(ctx, key, "body", body, "delay", strconv.Itoa(delay))
+	pipe.Expire(ctx, key, robotsCacheTTL)
+	_, _ = pipe.Exec(ctx)
 }
 
 func (c *Checker) getRobotsText(ctx context.Context, domain string) (string, int, error) {
 	key := robotsKeyPrefix + domain
 
-	cached, err := c.rdb.Get(ctx, key).Result()
-	if err == nil {
-		domRec, dbErr := models.GetDomain(ctx, c.pool, domain)
+	// Try Redis hash cache — returns both body and delay in one call
+	cached, err := c.rdb.HGetAll(ctx, key).Result()
+	if err == nil && len(cached) > 0 {
 		delay := DefaultCrawlDelayMs
-		if dbErr == nil {
-			delay = domRec.CrawlDelayMs
+		if d, parseErr := strconv.Atoi(cached["delay"]); parseErr == nil {
+			delay = d
 		}
-		return cached, delay, nil
+		return cached["body"], delay, nil
 	}
-	if err != redis.Nil {
-		return "", DefaultCrawlDelayMs, fmt.Errorf("redis get robots: %w", err)
+	if err != nil && err != redis.Nil {
+		// Key exists but is wrong type (e.g. leftover string from old cache format).
+		// Delete the stale key and fall through to re-fetch.
+		c.logger.Warn("deleting stale robots cache key", "key", key, "error", err)
+		_ = c.rdb.Del(ctx, key).Err()
 	}
 
 	// Try DB
 	domRec, err := models.GetDomain(ctx, c.pool, domain)
 	if err == nil && domRec.RobotsTxt != nil {
-		_ = c.rdb.Set(ctx, key, *domRec.RobotsTxt, robotsCacheTTL).Err()
+		c.cacheRobotsHash(ctx, key, *domRec.RobotsTxt, domRec.CrawlDelayMs)
 		return *domRec.RobotsTxt, domRec.CrawlDelayMs, nil
 	}
 	if err != nil && err != pgx.ErrNoRows {
@@ -107,18 +125,18 @@ func (c *Checker) getRobotsText(ctx context.Context, domain string) (string, int
 		_ = models.UpsertDomain(ctx, c.pool, domain, DefaultCrawlDelayMs)
 		return "", DefaultCrawlDelayMs, nil
 	}
+	req.Header.Set("User-Agent", CrawlerUserAgent)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		_ = models.UpsertDomain(ctx, c.pool, domain, DefaultCrawlDelayMs)
-		// Cache the empty result so we don't re-fetch for every URL on this domain
-		_ = c.rdb.Set(ctx, key, "", robotsCacheTTL).Err()
+		c.cacheRobotsHash(ctx, key, "", DefaultCrawlDelayMs)
 		return "", DefaultCrawlDelayMs, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		_ = models.UpsertDomain(ctx, c.pool, domain, DefaultCrawlDelayMs)
-		_ = c.rdb.Set(ctx, key, "", robotsCacheTTL).Err()
+		c.cacheRobotsHash(ctx, key, "", DefaultCrawlDelayMs)
 		return "", DefaultCrawlDelayMs, nil
 	}
 
@@ -130,9 +148,8 @@ func (c *Checker) getRobotsText(ctx context.Context, domain string) (string, int
 	robotsBody := string(body)
 	crawlDelay := extractCrawlDelay(robotsBody)
 
-	_ = models.UpsertDomain(ctx, c.pool, domain, crawlDelay)
-	_ = models.UpdateDomainRobotsTxt(ctx, c.pool, domain, robotsBody, crawlDelay)
-	_ = c.rdb.Set(ctx, key, robotsBody, robotsCacheTTL).Err()
+	_ = models.UpsertDomainWithRobots(ctx, c.pool, domain, robotsBody, crawlDelay)
+	c.cacheRobotsHash(ctx, key, robotsBody, crawlDelay)
 
 	return robotsBody, crawlDelay, nil
 }

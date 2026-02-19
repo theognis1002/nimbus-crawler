@@ -48,3 +48,15 @@ func UpdateDomainRobotsTxt(ctx context.Context, pool *pgxpool.Pool, domain strin
 	}
 	return nil
 }
+
+// UpsertDomainWithRobots inserts or updates a domain with robots.txt and crawl delay in a single query.
+func UpsertDomainWithRobots(ctx context.Context, pool *pgxpool.Pool, domain, robotsTxt string, crawlDelayMs int) error {
+	_, err := pool.Exec(ctx,
+		`INSERT INTO domains (domain, robots_txt, crawl_delay_ms) VALUES ($1, $2, $3)
+		 ON CONFLICT (domain) DO UPDATE SET robots_txt = EXCLUDED.robots_txt, crawl_delay_ms = EXCLUDED.crawl_delay_ms`,
+		domain, robotsTxt, crawlDelayMs)
+	if err != nil {
+		return fmt.Errorf("upserting domain with robots %s: %w", domain, err)
+	}
+	return nil
+}

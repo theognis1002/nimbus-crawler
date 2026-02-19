@@ -11,8 +11,8 @@ import (
 
 const (
 	blockDuration    = 5 * time.Second
-	reclaimInterval  = 30 * time.Second
-	reclaimMinIdle   = 60 * time.Second
+	reclaimInterval  = 10 * time.Second
+	reclaimMinIdle   = 30 * time.Second
 	reclaimBatchSize = 50
 	ackTimeout       = 5 * time.Second
 )
@@ -43,7 +43,7 @@ func NewConsumer(rdb *redis.Client, stream, dlq, group, consumerName string, cou
 // Run starts reading from the stream and returns a channel of Delivery.
 // The channel is closed when ctx is cancelled and both loops exit.
 func (c *Consumer) Run(ctx context.Context) <-chan Delivery {
-	ch := make(chan Delivery)
+	ch := make(chan Delivery, c.count)
 
 	c.wg.Add(2)
 	go func() {

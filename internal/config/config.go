@@ -27,6 +27,7 @@ type PostgresConfig struct {
 	Database string `yaml:"database"`
 	SSLMode  string `yaml:"sslmode"`
 	MaxConns int32  `yaml:"max_conns"`
+	MinConns int32  `yaml:"min_conns"`
 }
 
 func (c PostgresConfig) DSN() string {
@@ -45,9 +46,11 @@ func (c PostgresConfig) DSN() string {
 }
 
 type RedisConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Password string `yaml:"password"`
+	Host         string `yaml:"host"`
+	Port         int    `yaml:"port"`
+	Password     string `yaml:"password"`
+	PoolSize     int    `yaml:"pool_size"`
+	MinIdleConns int    `yaml:"min_idle_conns"`
 }
 
 func (c RedisConfig) Addr() string {
@@ -93,8 +96,11 @@ const (
 	defaultPostgresUser     = "nimbus"
 	defaultPostgresDB       = "nimbus"
 	defaultPostgresMaxConns = 20
+	defaultPostgresMinConns = 2
 	defaultRedisHost        = "localhost"
 	defaultRedisPort        = 6379
+	defaultRedisPoolSize    = 50
+	defaultRedisMinIdle     = 5
 	defaultMinIOEndpoint    = "localhost:9000"
 	defaultCrawlerWorkers   = 10
 	defaultMaxDepth         = 3
@@ -130,11 +136,20 @@ func (c *Config) applyDefaults() {
 	if c.Postgres.MaxConns == 0 {
 		c.Postgres.MaxConns = defaultPostgresMaxConns
 	}
+	if c.Postgres.MinConns == 0 {
+		c.Postgres.MinConns = defaultPostgresMinConns
+	}
 	if c.Redis.Host == "" {
 		c.Redis.Host = defaultRedisHost
 	}
 	if c.Redis.Port == 0 {
 		c.Redis.Port = defaultRedisPort
+	}
+	if c.Redis.PoolSize == 0 {
+		c.Redis.PoolSize = defaultRedisPoolSize
+	}
+	if c.Redis.MinIdleConns == 0 {
+		c.Redis.MinIdleConns = defaultRedisMinIdle
 	}
 	if c.MinIO.Endpoint == "" {
 		c.MinIO.Endpoint = defaultMinIOEndpoint
@@ -217,6 +232,11 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("POSTGRES_SSLMODE"); v != "" {
 		c.Postgres.SSLMode = v
 	}
+	if v := os.Getenv("POSTGRES_MIN_CONNS"); v != "" {
+		if m, err := strconv.Atoi(v); err == nil {
+			c.Postgres.MinConns = int32(m)
+		}
+	}
 	if v := os.Getenv("REDIS_HOST"); v != "" {
 		c.Redis.Host = v
 	}
@@ -227,6 +247,16 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
 		c.Redis.Password = v
+	}
+	if v := os.Getenv("REDIS_POOL_SIZE"); v != "" {
+		if s, err := strconv.Atoi(v); err == nil {
+			c.Redis.PoolSize = s
+		}
+	}
+	if v := os.Getenv("REDIS_MIN_IDLE_CONNS"); v != "" {
+		if s, err := strconv.Atoi(v); err == nil {
+			c.Redis.MinIdleConns = s
+		}
 	}
 	if v := os.Getenv("MINIO_ENDPOINT"); v != "" {
 		c.MinIO.Endpoint = v

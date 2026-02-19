@@ -23,17 +23,17 @@ func TestExtractCrawlDelay(t *testing.T) {
 		{
 			name: "no crawl delay returns default",
 			body: "User-agent: *\nDisallow: /private\n",
-			want: 1000,
+			want: DefaultCrawlDelayMs,
 		},
 		{
-			name: "crawl delay below 500ms clamped",
-			body: "User-agent: NimbusCrawler\nCrawl-delay: 0.1\n",
-			want: 500,
+			name: "crawl delay below minimum clamped",
+			body: "User-agent: NimbusCrawler\nCrawl-delay: 0.01\n",
+			want: MinCrawlDelayMs,
 		},
 		{
 			name: "empty body returns default",
 			body: "",
-			want: 1000,
+			want: DefaultCrawlDelayMs,
 		},
 		{
 			name: "NimbusCrawler preferred over wildcard",

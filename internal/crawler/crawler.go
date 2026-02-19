@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
 	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
@@ -28,6 +28,8 @@ type Crawler struct {
 	robotsCheck *robots.Checker
 	minio       *storage.MinIOClient
 	logger      *slog.Logger
+	domainCache sync.Map
+	retryWg     sync.WaitGroup
 }
 
 func New(
@@ -64,6 +66,7 @@ func (c *Crawler) Run(ctx context.Context, deliveries <-chan queue.Delivery) {
 	}
 
 	wg.Wait()
+	c.retryWg.Wait()
 	c.logger.Info("all crawler workers stopped")
 }
 
@@ -106,23 +109,6 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		return
 	}
 
-	// Check if already crawled
-	existing, err := models.GetURLByURL(ctx, c.pool, msg.URL)
-	if err != nil && err != pgx.ErrNoRows {
-		logger.Error("failed to check url status", "error", err)
-		if err := d.Nack(false); err != nil {
-			logger.Error("failed to nack message", "error", err)
-		}
-		return
-	}
-	if existing != nil && (existing.Status == string(models.StatusCrawled) || existing.Status == string(models.StatusParsed)) {
-		logger.Info("already crawled, skipping")
-		if err := d.Ack(); err != nil {
-			logger.Error("failed to ack message", "error", err)
-		}
-		return
-	}
-
 	parsed, err := url.Parse(msg.URL)
 	if err != nil {
 		logger.Error("invalid url", "error", err)
@@ -133,11 +119,31 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	}
 	domain := parsed.Hostname()
 
-	// Ensure domain exists
-	if err := models.UpsertDomain(ctx, c.pool, domain, robots.DefaultCrawlDelayMs); err != nil {
-		logger.Error("failed to upsert domain", "domain", domain, "error", err)
+	// Ensure domain exists (skip DB call if already cached in-process)
+	if _, loaded := c.domainCache.LoadOrStore(domain, true); !loaded {
+		if err := models.UpsertDomain(ctx, c.pool, domain, robots.DefaultCrawlDelayMs); err != nil {
+			c.domainCache.Delete(domain)
+			logger.Error("failed to upsert domain", "domain", domain, "error", err)
+			if err := d.Nack(false); err != nil {
+				logger.Error("failed to nack message", "error", err)
+			}
+			return
+		}
+	}
+
+	// Single upsert: insert or get existing URL, sets status to 'crawling' on insert
+	urlID, status, err := models.UpsertURLReturning(ctx, c.pool, msg.URL, domain, msg.Depth)
+	if err != nil {
+		logger.Error("failed to upsert url", "error", err)
 		if err := d.Nack(false); err != nil {
 			logger.Error("failed to nack message", "error", err)
+		}
+		return
+	}
+	if status != models.StatusCrawling {
+		logger.Info("url not in crawlable state, skipping", "status", string(status))
+		if err := d.Ack(); err != nil {
+			logger.Error("failed to ack message", "error", err)
 		}
 		return
 	}
@@ -152,9 +158,7 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		crawlDelay = delay
 		if !allowed {
 			logger.Info("disallowed by robots.txt")
-			if existing != nil {
-				_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, models.StatusSkipped)
-			}
+			_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusSkipped)
 			if err := d.Ack(); err != nil {
 				logger.Error("failed to ack message", "error", err)
 			}
@@ -177,45 +181,36 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		return
 	}
 
-	// Ensure URL record exists
-	var urlID string
-	if existing != nil {
-		urlID = existing.ID
-	} else {
-		urlID, err = models.InsertURL(ctx, c.pool, msg.URL, domain, msg.Depth)
-		if err != nil {
-			logger.Error("failed to insert url", "error", err)
-			if err := d.Nack(false); err != nil {
-				logger.Error("failed to nack message", "error", err)
-			}
-			return
-		}
-		if urlID == "" {
-			// Race: another worker inserted it
-			if err := d.Ack(); err != nil {
-				logger.Error("failed to ack message", "error", err)
-			}
-			return
-		}
-	}
-
-	_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusCrawling)
-
 	// Fetch
 	body, statusCode, err := c.fetcher.Fetch(ctx, msg.URL)
 	if err != nil || statusCode != http.StatusOK {
 		logger.Warn("fetch failed", "error", err, "status", statusCode)
-		retryCount, _ := models.IncrementRetryCount(ctx, c.pool, urlID)
+		retryCount, _ := models.IncrementRetryAndMaybeFailURL(ctx, c.pool, urlID, c.cfg.MaxRetries)
 		if retryCount >= c.cfg.MaxRetries {
-			_ = models.UpdateURLStatus(ctx, c.pool, urlID, models.StatusFailed)
 			if err := d.Nack(true); err != nil {
 				logger.Error("failed to nack message to DLQ", "error", err)
 			}
 		} else {
-			// Message stays in PEL; reclaim loop will re-deliver after min-idle (60s)
-			if err := d.Nack(false); err != nil {
-				logger.Error("failed to nack message", "error", err)
+			// Ack the original and re-publish after backoff delay
+			if err := d.Ack(); err != nil {
+				logger.Error("failed to ack message for retry", "error", err)
 			}
+			delay := backoffDuration(retryCount)
+			logger.Info("scheduling retry", "retry", retryCount, "delay", delay)
+			c.retryWg.Add(1)
+			go func() {
+				defer c.retryWg.Done()
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
+				pubCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := c.publisher.PublishURL(pubCtx, msg); err != nil {
+					logger.Error("failed to re-publish after backoff", "error", err)
+				}
+			}()
 		}
 		return
 	}

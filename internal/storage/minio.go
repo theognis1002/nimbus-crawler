@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"time"
 
 	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/minio/minio-go/v7"
@@ -20,9 +22,16 @@ type MinIOClient struct {
 }
 
 func NewMinIOClient(ctx context.Context, cfg config.MinIOConfig) (*MinIOClient, error) {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    cfg.UseSSL,
+		Transport: transport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating minio client: %w", err)

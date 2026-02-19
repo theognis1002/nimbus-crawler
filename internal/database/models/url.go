@@ -121,6 +121,37 @@ func IncrementRetryCount(ctx context.Context, pool *pgxpool.Pool, id string) (in
 	return count, err
 }
 
+// UpsertURLReturning inserts a URL with status 'crawling', or on conflict
+// atomically transitions pending/failed → 'crawling' to claim it for this worker.
+// URLs already crawled/parsed/skipped are left unchanged. The caller should
+// check the returned status to decide whether to proceed.
+func UpsertURLReturning(ctx context.Context, pool *pgxpool.Pool, rawURL, domain string, depth int) (id string, status URLStatus, err error) {
+	var statusStr string
+	err = pool.QueryRow(ctx,
+		`INSERT INTO urls (url, domain, depth, status) VALUES ($1, $2, $3, 'crawling')
+		 ON CONFLICT (url) DO UPDATE SET
+		   status = CASE WHEN urls.status IN ('pending', 'failed') THEN 'crawling' ELSE urls.status END,
+		   updated_at = NOW()
+		 RETURNING id, status`,
+		rawURL, domain, depth).Scan(&id, &statusStr)
+	if err != nil {
+		return "", "", fmt.Errorf("upserting url: %w", err)
+	}
+	return id, URLStatus(statusStr), nil
+}
+
+// IncrementRetryAndMaybeFailURL atomically increments retry_count and sets status to 'failed'
+// if the new count reaches maxRetries.
+func IncrementRetryAndMaybeFailURL(ctx context.Context, pool *pgxpool.Pool, id string, maxRetries int) (int, error) {
+	var count int
+	err := pool.QueryRow(ctx,
+		`UPDATE urls SET retry_count = retry_count + 1,
+		   status = CASE WHEN retry_count + 1 >= $2 THEN 'failed' ELSE status END,
+		   updated_at = NOW()
+		 WHERE id = $1 RETURNING retry_count`, id, maxRetries).Scan(&count)
+	return count, err
+}
+
 func ContentHashExists(ctx context.Context, pool *pgxpool.Pool, hash string) (bool, error) {
 	var exists bool
 	err := pool.QueryRow(ctx,
