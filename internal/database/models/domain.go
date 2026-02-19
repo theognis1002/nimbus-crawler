@@ -64,5 +64,8 @@ func UpsertDomainWithRobots(ctx context.Context, pool *pgxpool.Pool, domain, rob
 func UpdateDomainLastCrawlTime(ctx context.Context, pool *pgxpool.Pool, domain string) error {
 	_, err := pool.Exec(ctx,
 		`UPDATE domains SET last_crawl_time = NOW() WHERE domain = $1`, domain)
-	return err
+	if err != nil {
+		return fmt.Errorf("updating last_crawl_time for domain %s: %w", domain, err)
+	}
+	return nil
 }

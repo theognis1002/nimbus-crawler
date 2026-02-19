@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
+	"github.com/theognis1002/nimbus-crawler/internal/database/models"
+	"github.com/theognis1002/nimbus-crawler/internal/queue"
+	"github.com/theognis1002/nimbus-crawler/internal/robots"
 )
 
 func LoadAndPublish(ctx context.Context, seedFile string, pool *pgxpool.Pool, publisher *queue.Publisher, logger *slog.Logger) error {

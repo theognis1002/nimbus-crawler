@@ -9,7 +9,7 @@ Thanks for your interest in contributing! Here's how to get started.
 2. Clone the repo and copy the environment file:
 
    ```bash
-   git clone https://github.com/michaelmcclelland/nimbus-crawler.git
+   git clone https://github.com/theognis1002/nimbus-crawler.git
    cd nimbus-crawler
    cp .env.example .env
    ```

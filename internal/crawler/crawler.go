@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/storage"
+	"github.com/theognis1002/nimbus-crawler/internal/cache"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
+	"github.com/theognis1002/nimbus-crawler/internal/database/models"
+	"github.com/theognis1002/nimbus-crawler/internal/queue"
+	"github.com/theognis1002/nimbus-crawler/internal/robots"
+	"github.com/theognis1002/nimbus-crawler/internal/storage"
 )
 
 type Crawler struct {
@@ -226,19 +226,10 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	}
 
 	s3Link := fmt.Sprintf("%s/%s", storage.HTMLBucket, s3Key)
-	if err := models.UpdateURLCrawled(ctx, c.pool, urlID, s3Link); err != nil {
-		logger.Error("failed to update url record", "error", err)
-		if err := d.Nack(false); err != nil {
-			logger.Error("failed to nack message", "error", err)
-		}
-		return
-	}
 
-	if err := models.UpdateDomainLastCrawlTime(ctx, c.pool, domain); err != nil {
-		logger.Warn("failed to update domain last_crawl_time", "domain", domain, "error", err)
-	}
-
-	// Publish parse message
+	// Publish parse message before marking as crawled to avoid orphaned state:
+	// if we mark crawled first and the publish fails, the Nack'd re-delivery
+	// would see 'crawled' status and skip the URL permanently.
 	parseMsg := queue.ParseMessage{
 		URLID:      urlID,
 		URL:        msg.URL,
@@ -247,6 +238,14 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	}
 	if err := c.publisher.PublishParse(ctx, parseMsg); err != nil {
 		logger.Error("failed to publish parse message", "error", err)
+		if err := d.Nack(false); err != nil {
+			logger.Error("failed to nack message", "error", err)
+		}
+		return
+	}
+
+	if err := models.UpdateURLCrawledAndDomainTime(ctx, c.pool, urlID, s3Link, domain); err != nil {
+		logger.Error("failed to update url/domain records", "error", err)
 		if err := d.Nack(false); err != nil {
 			logger.Error("failed to nack message", "error", err)
 		}

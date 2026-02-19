@@ -7,7 +7,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
 )
 
 func main() {

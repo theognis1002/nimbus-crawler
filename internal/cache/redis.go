@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/redis/go-redis/v9"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
 )
 
 func NewRedisClient(ctx context.Context, cfg config.RedisConfig) (*redis.Client, error) {

@@ -120,6 +120,19 @@ func LoadFromEnv() *Config {
 	return cfg
 }
 
+// AutoSizePoolForWorkers sets MaxConns to workers+5 if POSTGRES_MAX_CONNS was
+// not explicitly set via env var. This ensures the pool is large enough for the
+// worker goroutines plus background operations (robots.txt, domain upserts).
+func (c *Config) AutoSizePoolForWorkers(workers int) {
+	if os.Getenv("POSTGRES_MAX_CONNS") != "" {
+		return // explicit config wins
+	}
+	needed := int32(workers + 5)
+	if needed > c.Postgres.MaxConns {
+		c.Postgres.MaxConns = needed
+	}
+}
+
 func (c *Config) applyDefaults() {
 	if c.Postgres.Host == "" {
 		c.Postgres.Host = defaultPostgresHost
@@ -235,6 +248,11 @@ func (c *Config) applyEnvOverrides() {
 	if v := os.Getenv("POSTGRES_MIN_CONNS"); v != "" {
 		if m, err := strconv.Atoi(v); err == nil {
 			c.Postgres.MinConns = int32(m)
+		}
+	}
+	if v := os.Getenv("POSTGRES_MAX_CONNS"); v != "" {
+		if m, err := strconv.Atoi(v); err == nil {
+			c.Postgres.MaxConns = int32(m)
 		}
 	}
 	if v := os.Getenv("REDIS_HOST"); v != "" {

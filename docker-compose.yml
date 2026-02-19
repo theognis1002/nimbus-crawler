@@ -97,6 +97,8 @@ services:
       MINIO_USE_SSL: "false"
       MAX_DEPTH: ${MAX_DEPTH}
       CRAWLER_WORKERS: ${CRAWLER_WORKERS}
+      POSTGRES_MAX_CONNS: ${POSTGRES_MAX_CONNS:-}
+      POSTGRES_MIN_CONNS: ${POSTGRES_MIN_CONNS:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -126,6 +128,8 @@ services:
       MINIO_USE_SSL: "false"
       MAX_DEPTH: ${MAX_DEPTH}
       PARSER_WORKERS: ${PARSER_WORKERS}
+      POSTGRES_MAX_CONNS: ${POSTGRES_MAX_CONNS:-}
+      POSTGRES_MIN_CONNS: ${POSTGRES_MIN_CONNS:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -134,7 +138,7 @@ services:
       minio:
         condition: service_healthy
     deploy:
-      replicas: 3
+      replicas: 4
 
 volumes:
   pgdata:

@@ -1,4 +1,4 @@
-module github.com/michaelmcclelland/nimbus-crawler
+module github.com/theognis1002/nimbus-crawler
 
 go 1.26
 

@@ -78,7 +78,7 @@ func (p *ProxyPool) Next(ctx context.Context) *url.URL {
 		if p.rdb == nil {
 			return proxy
 		}
-		key := proxyHealthKeyPrefix + proxy.String()
+		key := proxyHealthKeyPrefix + proxy.Host
 		exists, err := p.rdb.Exists(ctx, key).Result()
 		if err != nil {
 			p.logger.WarnContext(ctx, "redis error checking proxy health, assuming healthy", "proxy", proxy.Redacted(), "error", err)
@@ -97,7 +97,7 @@ func (p *ProxyPool) MarkUnhealthy(ctx context.Context, proxy *url.URL) {
 	if p.rdb == nil {
 		return
 	}
-	key := proxyHealthKeyPrefix + proxy.String()
+	key := proxyHealthKeyPrefix + proxy.Host
 	if err := p.rdb.SetNX(ctx, key, "1", p.cooldown).Err(); err != nil {
 		p.logger.WarnContext(ctx, "failed to mark proxy unhealthy in redis", "proxy", proxy.Redacted(), "error", err)
 	}

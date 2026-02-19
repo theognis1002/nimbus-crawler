@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
 )
 
 func NewPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, error) {

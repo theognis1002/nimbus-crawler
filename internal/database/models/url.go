@@ -53,6 +53,9 @@ func InsertURL(ctx context.Context, pool *pgxpool.Pool, url, domain string, dept
 
 // BulkInsertURLs inserts URLs and returns only the ones that were actually inserted (not already existing).
 func BulkInsertURLs(ctx context.Context, pool *pgxpool.Pool, urls []string, domains []string, depth int) ([]string, error) {
+	if len(urls) != len(domains) {
+		return nil, fmt.Errorf("bulk insert: urls and domains length mismatch (%d != %d)", len(urls), len(domains))
+	}
 	batch := &pgx.Batch{}
 	for i, u := range urls {
 		batch.Queue(
@@ -105,6 +108,30 @@ func UpdateURLCrawled(ctx context.Context, pool *pgxpool.Pool, id, s3HTMLLink st
 	return err
 }
 
+// UpdateURLCrawledAndDomainTime batches the URL crawled update and the domain
+// last_crawl_time update into a single DB round-trip using pgx.Batch.
+func UpdateURLCrawledAndDomainTime(ctx context.Context, pool *pgxpool.Pool, urlID, s3HTMLLink, domain string) error {
+	batch := &pgx.Batch{}
+	batch.Queue(
+		`UPDATE urls SET status = 'crawled', s3_html_link = $2, last_crawl_time = NOW(), updated_at = NOW()
+		 WHERE id = $1`,
+		urlID, s3HTMLLink)
+	batch.Queue(
+		`UPDATE domains SET last_crawl_time = NOW() WHERE domain = $1`,
+		domain)
+
+	br := pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	if _, err := br.Exec(); err != nil {
+		return fmt.Errorf("updating url crawled: %w", err)
+	}
+	if _, err := br.Exec(); err != nil {
+		return fmt.Errorf("updating domain last_crawl_time: %w", err)
+	}
+	return nil
+}
+
 func UpdateURLParsed(ctx context.Context, pool *pgxpool.Pool, id, contentHash, s3TextLink string) error {
 	_, err := pool.Exec(ctx,
 		`UPDATE urls SET status = 'parsed', content_hash = $2, s3_text_link = $3, updated_at = NOW()
@@ -155,8 +182,8 @@ func IncrementRetryAndMaybeFailURL(ctx context.Context, pool *pgxpool.Pool, id s
 func ResetStaleCrawlingURLs(ctx context.Context, pool *pgxpool.Pool, staleDuration time.Duration) (int64, error) {
 	tag, err := pool.Exec(ctx,
 		`UPDATE urls SET status = 'pending', updated_at = NOW()
-		 WHERE status = 'crawling' AND updated_at < NOW() - $1::interval`,
-		staleDuration.String())
+		 WHERE status = 'crawling' AND updated_at < NOW() - make_interval(secs => $1)`,
+		staleDuration.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("resetting stale crawling urls: %w", err)
 	}

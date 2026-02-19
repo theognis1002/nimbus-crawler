@@ -12,9 +12,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
 	"github.com/redis/go-redis/v9"
 	"github.com/temoto/robotstxt"
+	"github.com/theognis1002/nimbus-crawler/internal/database/models"
 )
 
 const (

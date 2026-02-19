@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/seeder"
+	"github.com/theognis1002/nimbus-crawler/internal/cache"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
+	"github.com/theognis1002/nimbus-crawler/internal/database"
+	"github.com/theognis1002/nimbus-crawler/internal/queue"
+	"github.com/theognis1002/nimbus-crawler/internal/seeder"
 )
 
 func main() {

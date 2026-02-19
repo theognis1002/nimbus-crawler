@@ -4,7 +4,7 @@ CREATE TABLE domains (
     domain          TEXT PRIMARY KEY,
     last_crawl_time TIMESTAMPTZ,
     robots_txt      TEXT,
-    crawl_delay_ms  INTEGER NOT NULL DEFAULT 1000,
+    crawl_delay_ms  INTEGER NOT NULL DEFAULT 200,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

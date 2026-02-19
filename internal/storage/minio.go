@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
 )
 
 // maxObjectSize is the read limit for MinIO objects.

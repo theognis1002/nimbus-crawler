@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
+	"github.com/theognis1002/nimbus-crawler/internal/cache"
+	"github.com/theognis1002/nimbus-crawler/internal/robots"
 )
 
 const (
@@ -147,6 +149,13 @@ func (f *Fetcher) doFetch(ctx context.Context, rawURL string, client *http.Clien
 		return nil, 0, fmt.Errorf("fetching %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		mediaType, _, _ := mime.ParseMediaType(ct)
+		if mediaType != "" && !strings.HasPrefix(mediaType, "text/") && mediaType != "application/xhtml+xml" {
+			return nil, resp.StatusCode, fmt.Errorf("unexpected content-type %q for %s", ct, rawURL)
+		}
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {

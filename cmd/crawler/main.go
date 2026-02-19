@@ -9,14 +9,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/michaelmcclelland/nimbus-crawler/internal/cache"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/config"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/crawler"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/database/models"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/queue"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/robots"
-	"github.com/michaelmcclelland/nimbus-crawler/internal/storage"
+	"github.com/theognis1002/nimbus-crawler/internal/cache"
+	"github.com/theognis1002/nimbus-crawler/internal/config"
+	"github.com/theognis1002/nimbus-crawler/internal/crawler"
+	"github.com/theognis1002/nimbus-crawler/internal/database"
+	"github.com/theognis1002/nimbus-crawler/internal/database/models"
+	"github.com/theognis1002/nimbus-crawler/internal/queue"
+	"github.com/theognis1002/nimbus-crawler/internal/robots"
+	"github.com/theognis1002/nimbus-crawler/internal/storage"
 )
 
 func main() {
@@ -33,6 +33,8 @@ func run(logger *slog.Logger) error {
 		logger.Debug("config file not found, using env vars", "error", err)
 		cfg = config.LoadFromEnv()
 	}
+
+	cfg.AutoSizePoolForWorkers(cfg.Crawler.Workers)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
