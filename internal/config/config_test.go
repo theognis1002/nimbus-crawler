@@ -172,6 +172,67 @@ func TestLoad_NonexistentFile(t *testing.T) {
 	}
 }
 
+func TestRespectRobotsTxt_DefaultTrue(t *testing.T) {
+	t.Parallel()
+	cfg := LoadFromEnv()
+	if cfg.Crawler.RespectRobotsTxt == nil {
+		t.Fatal("RespectRobotsTxt should not be nil after defaults")
+	}
+	if !*cfg.Crawler.RespectRobotsTxt {
+		t.Error("RespectRobotsTxt should default to true")
+	}
+}
+
+func TestRespectRobotsTxt_YAMLFalse(t *testing.T) {
+	yaml := `
+crawler:
+  respect_robots_txt: false
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatalf("writing temp config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Crawler.RespectRobotsTxt == nil {
+		t.Fatal("RespectRobotsTxt should not be nil")
+	}
+	if *cfg.Crawler.RespectRobotsTxt {
+		t.Error("RespectRobotsTxt should be false when set in YAML")
+	}
+}
+
+func TestRespectRobotsTxt_EnvOverride(t *testing.T) {
+	yaml := `
+crawler:
+  respect_robots_txt: true
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatalf("writing temp config: %v", err)
+	}
+
+	t.Setenv("RESPECT_ROBOTS_TXT", "false")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Crawler.RespectRobotsTxt == nil {
+		t.Fatal("RespectRobotsTxt should not be nil")
+	}
+	if *cfg.Crawler.RespectRobotsTxt {
+		t.Error("RespectRobotsTxt should be false when env override is set")
+	}
+}
+
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	yaml := `
 postgres:

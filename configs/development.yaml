@@ -1,19 +1,19 @@
 postgres:
-  host: postgres
+  host: localhost
   port: 5432
-  user: ${POSTGRES_USER}
-  password: ${POSTGRES_PASSWORD}
-  database: ${POSTGRES_DB}
+  user: nimbus
+  password: nimbus_secret
+  database: nimbus
   max_conns: 20
 
 redis:
-  host: redis
+  host: localhost
   port: 6379
 
 minio:
-  endpoint: minio:9000
-  access_key: ${MINIO_ACCESS_KEY}
-  secret_key: ${MINIO_SECRET_KEY}
+  endpoint: localhost:9000
+  access_key: nimbus
+  secret_key: nimbus_secret
   use_ssl: false
 
 crawler:
@@ -23,6 +23,7 @@ crawler:
   timeout_secs: 30
   max_redirects: 5
   prefetch_count: 10
+  respect_robots_txt: true
   proxy:
     file: ""
     health_cooldown_s: 60
@@ -33,4 +34,4 @@ parser:
   prefetch_count: 10
 
 migration:
-  path: "file://migrations"
+  path: "file://internal/database/migrations"

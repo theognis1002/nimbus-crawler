@@ -99,7 +99,7 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	logger = logger.With("url", msg.URL, "depth", msg.Depth)
 
 	if msg.Depth > c.cfg.MaxDepth {
-		logger.Debug("max depth exceeded, skipping")
+		logger.Info("max depth exceeded, skipping")
 		if err := d.Ack(); err != nil {
 			logger.Error("failed to ack message", "error", err)
 		}
@@ -116,7 +116,7 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 		return
 	}
 	if existing != nil && (existing.Status == string(models.StatusCrawled) || existing.Status == string(models.StatusParsed)) {
-		logger.Debug("already crawled, skipping")
+		logger.Info("already crawled, skipping")
 		if err := d.Ack(); err != nil {
 			logger.Error("failed to ack message", "error", err)
 		}
@@ -143,19 +143,25 @@ func (c *Crawler) processMessage(ctx context.Context, logger *slog.Logger, d que
 	}
 
 	// Check robots.txt
-	allowed, crawlDelay, err := c.robotsCheck.IsAllowed(ctx, msg.URL, domain)
-	if err != nil {
-		logger.Warn("robots check failed", "error", err)
-	}
-	if !allowed {
-		logger.Debug("disallowed by robots.txt")
-		if existing != nil {
-			_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, models.StatusSkipped)
+	crawlDelay := robots.DefaultCrawlDelayMs
+	if c.cfg.RespectRobotsTxt == nil || *c.cfg.RespectRobotsTxt {
+		allowed, delay, err := c.robotsCheck.IsAllowed(ctx, msg.URL, domain)
+		if err != nil {
+			logger.Warn("robots check failed", "error", err)
 		}
-		if err := d.Ack(); err != nil {
-			logger.Error("failed to ack message", "error", err)
+		crawlDelay = delay
+		if !allowed {
+			logger.Info("disallowed by robots.txt")
+			if existing != nil {
+				_ = models.UpdateURLStatus(ctx, c.pool, existing.ID, models.StatusSkipped)
+			}
+			if err := d.Ack(); err != nil {
+				logger.Error("failed to ack message", "error", err)
+			}
+			return
 		}
-		return
+	} else {
+		logger.Debug("robots.txt checking disabled")
 	}
 
 	// Rate limit

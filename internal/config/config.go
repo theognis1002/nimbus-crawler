@@ -62,13 +62,14 @@ type MinIOConfig struct {
 }
 
 type CrawlerConfig struct {
-	Workers       int         `yaml:"workers"`
-	MaxDepth      int         `yaml:"max_depth"`
-	MaxRetries    int         `yaml:"max_retries"`
-	TimeoutSecs   int         `yaml:"timeout_secs"`
-	MaxRedirects  int         `yaml:"max_redirects"`
-	PrefetchCount int         `yaml:"prefetch_count"`
-	Proxy         ProxyConfig `yaml:"proxy"`
+	Workers          int         `yaml:"workers"`
+	MaxDepth         int         `yaml:"max_depth"`
+	MaxRetries       int         `yaml:"max_retries"`
+	TimeoutSecs      int         `yaml:"timeout_secs"`
+	MaxRedirects     int         `yaml:"max_redirects"`
+	PrefetchCount    int         `yaml:"prefetch_count"`
+	RespectRobotsTxt *bool       `yaml:"respect_robots_txt"`
+	Proxy            ProxyConfig `yaml:"proxy"`
 }
 
 type ProxyConfig struct {
@@ -165,6 +166,10 @@ func (c *Config) applyDefaults() {
 	if c.Parser.PrefetchCount == 0 {
 		c.Parser.PrefetchCount = defaultPrefetchCount
 	}
+	if c.Crawler.RespectRobotsTxt == nil {
+		t := true
+		c.Crawler.RespectRobotsTxt = &t
+	}
 	if c.Crawler.Proxy.HealthCooldownS == 0 {
 		c.Crawler.Proxy.HealthCooldownS = defaultProxyHealthCooldownS
 	}
@@ -258,6 +263,10 @@ func (c *Config) applyEnvOverrides() {
 		if s, err := strconv.Atoi(v); err == nil {
 			c.Crawler.Proxy.HealthCooldownS = s
 		}
+	}
+	if v := os.Getenv("RESPECT_ROBOTS_TXT"); v != "" {
+		b := strings.EqualFold(v, "true")
+		c.Crawler.RespectRobotsTxt = &b
 	}
 	if v := os.Getenv("MIGRATION_PATH"); v != "" {
 		c.Migration.Path = v

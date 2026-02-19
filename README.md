@@ -22,16 +22,16 @@ seeds.txt
                                                           (up to max_depth)
 ```
 
-| Component  | Technology | Purpose                              |
-|------------|-----------|---------------------------------------|
-| PostgreSQL | 18        | URL/domain records, crawl state                  |
-| Redis      | 8         | DNS cache, rate limiting, robots.txt, job queues  |
-| MinIO      | pinned    | S3-compatible storage (HTML + text)               |
+| Component  | Technology | Purpose                                          |
+| ---------- | ---------- | ------------------------------------------------ |
+| PostgreSQL | 18         | URL/domain records, crawl state                  |
+| Redis      | 8          | DNS cache, rate limiting, robots.txt, job queues |
+| MinIO      | pinned     | S3-compatible storage (HTML + text)              |
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/michaelmcclelland/nimbus-crawler.git
+git clone https://github.com/theognis1002/nimbus-crawler.git
 cd nimbus-crawler
 cp .env.example .env
 make dev
@@ -49,23 +49,23 @@ make dev
 
 Config loads from `configs/development.yaml` with environment variable overrides (env vars take priority). See [`.env.example`](.env.example) for the full variable list.
 
-| Variable           | Default | Description                    |
-|--------------------|---------|--------------------------------|
-| `MAX_DEPTH`        | 3       | Maximum link-follow depth      |
-| `CRAWLER_WORKERS`  | 10      | Goroutines per crawler replica |
-| `PARSER_WORKERS`   | 5       | Goroutines per parser replica  |
+| Variable          | Default | Description                    |
+| ----------------- | ------- | ------------------------------ |
+| `MAX_DEPTH`       | 3       | Maximum link-follow depth      |
+| `CRAWLER_WORKERS` | 10      | Goroutines per crawler replica |
+| `PARSER_WORKERS`  | 5       | Goroutines per parser replica  |
 
 ## Make Targets
 
-| Command      | Description                        |
-|--------------|------------------------------------|
-| `make dev`   | Build and start all services       |
-| `make build` | Build Docker images                |
-| `make test`  | Run Go tests                       |
-| `make seed`  | Run the seeder independently       |
-| `make logs`  | Tail crawler and parser logs       |
-| `make down`  | Stop all services                  |
-| `make clean` | Stop all services and remove data  |
+| Command      | Description                       |
+| ------------ | --------------------------------- |
+| `make dev`   | Build and start all services      |
+| `make build` | Build Docker images               |
+| `make test`  | Run Go tests                      |
+| `make seed`  | Run the seeder independently      |
+| `make logs`  | Tail crawler and parser logs      |
+| `make down`  | Stop all services                 |
+| `make clean` | Stop all services and remove data |
 
 ## Local Development
 
@@ -73,10 +73,10 @@ Start backing services, then run Go services directly:
 
 ```bash
 docker-compose up -d postgres redis minio
-go run ./cmd/migrate
-go run ./cmd/seeder
-go run ./cmd/crawler
-go run ./cmd/parser
+go run ./cmd/migrate  # apply database schema migrations
+go run ./cmd/seeder   # seed initial URLs from seeds.txt into Redis frontier stream
+go run ./cmd/crawler  # fetch pages, store HTML in MinIO, publish parse jobs
+go run ./cmd/parser   # extract text/links from HTML, deduplicate, publish new crawl jobs
 ```
 
 Update `.env` to use `localhost` for `POSTGRES_HOST`, `REDIS_HOST`, and `MINIO_ENDPOINT`.

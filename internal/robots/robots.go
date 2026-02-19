@@ -25,11 +25,11 @@ const (
 	CrawlerUserAgent = "NimbusCrawler/1.0"
 
 	// DefaultCrawlDelayMs is the fallback crawl delay when no Crawl-Delay directive exists.
-	DefaultCrawlDelayMs = 1000
+	DefaultCrawlDelayMs = 200
 	// MinCrawlDelayMs is the floor applied to any parsed Crawl-Delay.
-	MinCrawlDelayMs = 500
+	MinCrawlDelayMs = 100
 
-	robotsFetchTimeout = 10 * time.Second
+	robotsFetchTimeout = 2 * time.Second
 	maxRobotsBodySize  = 512 * 1024 // 512KB
 )
 
@@ -110,12 +110,15 @@ func (c *Checker) getRobotsText(ctx context.Context, domain string) (string, int
 	resp, err := c.client.Do(req)
 	if err != nil {
 		_ = models.UpsertDomain(ctx, c.pool, domain, DefaultCrawlDelayMs)
+		// Cache the empty result so we don't re-fetch for every URL on this domain
+		_ = c.rdb.Set(ctx, key, "", robotsCacheTTL).Err()
 		return "", DefaultCrawlDelayMs, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		_ = models.UpsertDomain(ctx, c.pool, domain, DefaultCrawlDelayMs)
+		_ = c.rdb.Set(ctx, key, "", robotsCacheTTL).Err()
 		return "", DefaultCrawlDelayMs, nil
 	}
 

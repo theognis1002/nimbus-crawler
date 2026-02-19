@@ -12,9 +12,10 @@ go build -o bin/migrate ./cmd/migrate
 go build -o bin/seeder ./cmd/seeder
 
 # Run individual services (requires infrastructure running)
-go run ./cmd/crawler
-go run ./cmd/parser
-go run ./cmd/migrate
+go run ./cmd/migrate  # apply database schema migrations
+go run ./cmd/seeder   # seed initial URLs from seeds.txt into Redis frontier stream
+go run ./cmd/crawler  # fetch pages, store HTML in MinIO, publish parse jobs
+go run ./cmd/parser   # extract text/links from HTML, deduplicate, publish new crawl jobs
 
 # Full stack via Docker
 docker-compose up -d          # start all services
@@ -64,7 +65,7 @@ Seeder → Redis Streams(stream:frontier) → Crawler Workers → MinIO(html) + 
 
 ### Configuration
 
-Config loads from `configs/development.yaml` (optional) with environment variable overrides. Key env vars: `POSTGRES_*`, `REDIS_*`, `MINIO_*`, `MAX_DEPTH`, `CRAWLER_WORKERS`, `PARSER_WORKERS`. See `.env.example` for the full list.
+Config loads from `configs/development.yaml` (optional) with environment variable overrides. Key env vars: `POSTGRES_*`, `REDIS_*`, `MINIO_*`, `MAX_DEPTH`, `CRAWLER_WORKERS`, `PARSER_WORKERS`, `RESPECT_ROBOTS_TXT`. See `.env.example` for the full list.
 
 ### Database Schema
 
